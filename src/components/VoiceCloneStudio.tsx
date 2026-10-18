@@ -416,20 +416,38 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
                           </button>
                         </div>
                       ) : (
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm font-bold text-slate-100 truncate">{p.name}</h4>
-                          <button
-                            onClick={(e) => handleStartRename(p, e)}
-                            className="p-1 rounded text-slate-500 hover:text-violet-300 hover:bg-slate-800 transition-colors"
-                            title="Rename voice profile"
-                          >
-                            <Edit3 className="w-3 h-3" />
-                          </button>
-                          {isSelected && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-950 text-violet-300 border border-violet-800 font-medium shrink-0">
-                              Active
-                            </span>
-                          )}
+                        <div className="flex flex-col gap-2">
+                          <div className="flex items-center gap-2">
+                            <h4 className="text-sm font-bold text-slate-100 truncate">{p.name}</h4>
+                            <button
+                              onClick={(e) => handleStartRename(p, e)}
+                              className="p-1 rounded text-slate-500 hover:text-violet-300 hover:bg-slate-800 transition-colors"
+                              title="Rename voice profile"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                            </button>
+                            {isSelected && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-950 text-violet-300 border border-violet-800 font-medium shrink-0">
+                                Active
+                              </span>
+                            )}
+                          </div>
+                          
+                          {/* Base Voice Selector */}
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <label className="text-[10px] text-slate-400">Model:</label>
+                            <select
+                              value={p.baseVoice}
+                              onChange={(e) => handleFieldChange(p.id, { baseVoice: e.target.value as any })}
+                              className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-0.5 text-[10px] text-slate-200 outline-none hover:border-violet-500"
+                            >
+                              <option value="Kore">Kore</option>
+                              <option value="Puck">Puck</option>
+                              <option value="Charon">Charon</option>
+                              <option value="Fenrir">Fenrir</option>
+                              <option value="Zephyr">Zephyr</option>
+                            </select>
+                          </div>
                         </div>
                       )}
                       
