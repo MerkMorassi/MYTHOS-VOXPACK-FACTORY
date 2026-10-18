@@ -290,12 +290,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-1">
-                  <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">Mood:</span>
-                  <span className="text-[10px] font-mono text-violet-200 font-bold bg-violet-950 px-1 py-0.2 rounded border border-violet-800/60">
+                  <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">Mood:</span>
+                  <span className="text-xs font-mono text-violet-200 font-bold bg-violet-950 px-2 py-0.5 rounded border border-violet-800/60">
                     {selectedMood.tag}
                   </span>
                 </div>
-                <span className="text-xs font-bold text-slate-100 group-hover:text-violet-200 truncate block">
+                <span className="text-sm font-bold text-slate-100 group-hover:text-violet-200 truncate block">
                   {selectedMood.label}
                 </span>
               </div>

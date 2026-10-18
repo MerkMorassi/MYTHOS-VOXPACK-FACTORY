@@ -4,6 +4,7 @@ import { ChatView, Message } from './components/ChatView';
 import { VoiceCloneStudio } from './components/VoiceCloneStudio';
 import { PersonaManager } from './components/PersonaManager';
 import { LoreManager } from './components/LoreManager';
+import { MoodManager } from './components/MoodManager';
 import { OrbTheme } from './components/GlowingOrb';
 import { VoiceProfile, getSavedVoiceProfiles, speakWithVoiceProfile, stopCurrentAudio } from './services/voiceCloneService';
 import { Persona, getActivePersona, getSavedPersonas } from './services/personaStore';
@@ -21,7 +22,7 @@ import { runLoreExtractionWorker } from './services/loreExtractionWorker';
 import { MoodOption, getSavedMoodId, saveMoodId, getMoodById } from './services/moodStore';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore'>('companion');
+  const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
   const [activeMode, setActiveMode] = useState<'off-stage' | 'on-stage'>('off-stage');
   const [activePersona, setActivePersona] = useState<Persona>(() => getActivePersona());
   
@@ -548,6 +549,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         )}
 
         {activeTab === 'lore' && <LoreManager />}
+        {activeTab === 'moods' && <MoodManager />}
       </main>
     </div>
   );

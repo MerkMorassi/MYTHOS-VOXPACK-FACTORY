@@ -2,448 +2,69 @@ export interface MoodOption {
   id: string;
   label: string;
   tag: string;
-  category: 'Natural & Conversational' | 'High Energy & Expressive' | 'Dramatic & Theatrical' | 'Somber & Vulnerable' | 'Curious & Analytical';
+  category: 'Natural & Conversational' | 'High Energy & Expressive' | 'Dramatic & Theatrical' | 'Somber & Vulnerable' | 'Curious & Analytical' | 'Custom';
   description: string;
-  pitchMod?: number; // relative modifier for speech synthesis
-  rateMod?: number;
+  pitchMod?: number; // 0.5 to 2.0
+  rateMod?: number; // 0.5 to 2.0
+  volumeMod?: number; // 0.0 to 1.0
 }
 
+const STORAGE_KEY = 'lila_custom_moods';
+const SELECTED_MOOD_KEY = 'lila_selected_mood_id';
+
 export const EXHAUSTIVE_MOODS: MoodOption[] = [
-  // 1. Natural & Conversational
-  {
-    id: 'natural',
-    label: 'Natural & Grounded',
-    tag: '[natural]',
-    category: 'Natural & Conversational',
-    description: 'Balanced, spontaneous conversational flow with natural pacing and authentic presence',
-    pitchMod: 1.0,
-    rateMod: 1.0,
-  },
-  {
-    id: 'intimate',
-    label: 'Intimate & Close-Mic',
-    tag: '[intimate]',
-    category: 'Natural & Conversational',
-    description: 'Warm, soft-spoken, near-field vocal tone with gentle breaths and close presence',
-    pitchMod: 0.98,
-    rateMod: 0.92,
-  },
-  {
-    id: 'whisper',
-    label: 'Hushed Whisper',
-    tag: '[whisper]',
-    category: 'Natural & Conversational',
-    description: 'Sub-vocal breathy whisper, low decibel, secret and confidential delivery',
-    pitchMod: 0.95,
-    rateMod: 0.88,
-  },
-  {
-    id: 'warm',
-    label: 'Warm & Empathetic',
-    tag: '[warm]',
-    category: 'Natural & Conversational',
-    description: 'Soothing resonance, compassionate inflection, open and reassuring cadence',
-    pitchMod: 1.02,
-    rateMod: 0.95,
-  },
-  {
-    id: 'gentle',
-    label: 'Gentle & Comforting',
-    tag: '[gentle]',
-    category: 'Natural & Conversational',
-    description: 'Tender lullaby-soft cadence, nurturing warmth, calm protective reassurance',
-    pitchMod: 0.99,
-    rateMod: 0.9,
-  },
-  {
-    id: 'hesitant',
-    label: 'Thoughtful & Hesitant',
-    tag: '[hesitant]',
-    category: 'Natural & Conversational',
-    description: 'Frequent contemplative pauses, mid-sentence revisions, thoughtful searching',
-    pitchMod: 0.97,
-    rateMod: 0.88,
-  },
-  {
-    id: 'confessional',
-    label: 'Hushed Confessional',
-    tag: '[confessional]',
-    category: 'Natural & Conversational',
-    description: 'Quietly divulging innermost secrets, emotional transparency, raw vulnerability',
-    pitchMod: 0.96,
-    rateMod: 0.9,
-  },
-  {
-    id: 'candid',
-    label: 'Unfiltered & Candid',
-    tag: '[candid]',
-    category: 'Natural & Conversational',
-    description: 'Zero performance, completely raw, colloquial, grounded everyday dialogue',
-    pitchMod: 1.0,
-    rateMod: 1.02,
-  },
-  {
-    id: 'calm',
-    label: 'Calm & Zen',
-    tag: '[calm]',
-    category: 'Natural & Conversational',
-    description: 'Unflappable serenity, steady unhurried breath, relaxed meditative rhythm',
-    pitchMod: 0.95,
-    rateMod: 0.9,
-  },
-  {
-    id: 'pensive',
-    label: 'Pensive & Daydreaming',
-    tag: '[pensive]',
-    category: 'Natural & Conversational',
-    description: 'Drifting attention, trailing off, philosophical reverie and subtle wonder',
-    pitchMod: 0.96,
-    rateMod: 0.92,
-  },
-
-  // 2. High Energy & Expressive
-  {
-    id: 'excited',
-    label: 'Excited & Electric',
-    tag: '[excited]',
-    category: 'High Energy & Expressive',
-    description: 'Bright pitch elevation, animated cadence, infectious kinetic optimism',
-    pitchMod: 1.15,
-    rateMod: 1.12,
-  },
-  {
-    id: 'playful',
-    label: 'Playful & Teasing',
-    tag: '[playful]',
-    category: 'High Energy & Expressive',
-    description: 'Mischievous upward lilt, wry smirks in the voice, lively repartee',
-    pitchMod: 1.08,
-    rateMod: 1.05,
-  },
-  {
-    id: 'joyful',
-    label: 'Radiant Joy',
-    tag: '[joyful]',
-    category: 'High Energy & Expressive',
-    description: 'Open-throated warmth, ringing resonance, laughing undertone',
-    pitchMod: 1.12,
-    rateMod: 1.08,
-  },
-  {
-    id: 'ecstatic',
-    label: 'Ecstatic Wonder',
-    tag: '[ecstatic]',
-    category: 'High Energy & Expressive',
-    description: 'Rapid breath, marveling awe, vibrant vocal enthusiasm',
-    pitchMod: 1.18,
-    rateMod: 1.14,
-  },
-  {
-    id: 'triumphant',
-    label: 'Triumphant & Victorious',
-    tag: '[triumphant]',
-    category: 'High Energy & Expressive',
-    description: 'Bold soaring fanfare, exultant confidence, proud commanding power',
-    pitchMod: 1.14,
-    rateMod: 1.08,
-  },
-  {
-    id: 'mischievous',
-    label: 'Mischievous & Cunning',
-    tag: '[mischievous]',
-    category: 'High Energy & Expressive',
-    description: 'Arch conspiratorial chuckle, playful trickster cadence, sly glint',
-    pitchMod: 1.06,
-    rateMod: 1.04,
-  },
-  {
-    id: 'sarcastic',
-    label: 'Wry & Sarcastic',
-    tag: '[sarcastic]',
-    category: 'High Energy & Expressive',
-    description: 'Deadpan timing, arched-eyebrow vocal inflections, droll wit',
-    pitchMod: 0.92,
-    rateMod: 0.98,
-  },
-  {
-    id: 'flirty',
-    label: 'Flirtatious & Alluring',
-    tag: '[flirty]',
-    category: 'High Energy & Expressive',
-    description: 'Slow melodic drawl, melodic pauses, magnetic vocal charisma',
-    pitchMod: 1.04,
-    rateMod: 0.92,
-  },
-  {
-    id: 'frantic',
-    label: 'Frantic & Rapid-Fire',
-    tag: '[frantic]',
-    category: 'High Energy & Expressive',
-    description: 'Accelerated breathless tempo, high pulse delivery, kinetic tumbling ideas',
-    pitchMod: 1.16,
-    rateMod: 1.22,
-  },
-
-  // 3. Dramatic & Theatrical
-  {
-    id: 'dramatic',
-    label: 'Dramatic & High Tension',
-    tag: '[dramatic]',
-    category: 'Dramatic & Theatrical',
-    description: 'Heightened theatrical gravity, sharp deliberate diction, heavy dramatic stakes',
-    pitchMod: 1.05,
-    rateMod: 0.95,
-  },
-  {
-    id: 'suspenseful',
-    label: 'Suspenseful & Breathless',
-    tag: '[suspenseful]',
-    category: 'Dramatic & Theatrical',
-    description: 'Tense pacing, audible sharp intakes of air, whispered adrenaline',
-    pitchMod: 1.06,
-    rateMod: 1.04,
-  },
-  {
-    id: 'noir',
-    label: 'Retro Noir & Smoky',
-    tag: '[noir]',
-    category: 'Dramatic & Theatrical',
-    description: 'Smoky, world-weary detective cadence, cynical gravel, deliberate pauses',
-    pitchMod: 0.88,
-    rateMod: 0.9,
-  },
-  {
-    id: 'mysterious',
-    label: 'Enigmatic & Cryptic',
-    tag: '[mysterious]',
-    category: 'Dramatic & Theatrical',
-    description: 'Veiled meanings, lyrical pacing, hypnotic quiet intensity',
-    pitchMod: 0.94,
-    rateMod: 0.9,
-  },
-  {
-    id: 'commanding',
-    label: 'Commanding & Authoritative',
-    tag: '[commanding]',
-    category: 'Dramatic & Theatrical',
-    description: 'Firm chest resonance, decisive articulation, authoritative leadership',
-    pitchMod: 0.9,
-    rateMod: 1.02,
-  },
-  {
-    id: 'cinematic',
-    label: 'Cinematic Monologue',
-    tag: '[cinematic]',
-    category: 'Dramatic & Theatrical',
-    description: 'Sweeping operatic arc, nuanced dynamic shifts, prestige cinema delivery',
-    pitchMod: 1.0,
-    rateMod: 0.94,
-  },
-  {
-    id: 'poetic',
-    label: 'Lyrical & Poetic',
-    tag: '[poetic]',
-    category: 'Dramatic & Theatrical',
-    description: 'Rhythmic iambic cadence, flowing breath, evocative sensory imagery',
-    pitchMod: 1.02,
-    rateMod: 0.92,
-  },
-  {
-    id: 'defiant',
-    label: 'Fierce & Defiant',
-    tag: '[defiant]',
-    category: 'Dramatic & Theatrical',
-    description: 'Steely resolute grit, unyielding conviction, sharp defiant edge',
-    pitchMod: 1.08,
-    rateMod: 1.06,
-  },
-  {
-    id: 'tragic',
-    label: 'Tragic & Shakespearean',
-    tag: '[tragic]',
-    category: 'Dramatic & Theatrical',
-    description: 'Profound historical gravity, monumental pathos, echoes of classical stage',
-    pitchMod: 0.92,
-    rateMod: 0.88,
-  },
-  {
-    id: 'ominous',
-    label: 'Ominous & Foreboding',
-    tag: '[ominous]',
-    category: 'Dramatic & Theatrical',
-    description: 'Low chilling timbre, deliberate ominous pacing, looming shadow in voice',
-    pitchMod: 0.84,
-    rateMod: 0.88,
-  },
-  {
-    id: 'urgent',
-    label: 'Urgent & Crisis',
-    tag: '[urgent]',
-    category: 'Dramatic & Theatrical',
-    description: 'Rapid-fire clipped delivery, elevated pitch, high alert status',
-    pitchMod: 1.12,
-    rateMod: 1.2,
-  },
-
-  // 4. Somber & Vulnerable
-  {
-    id: 'melancholic',
-    label: 'Melancholic & Yearning',
-    tag: '[melancholic]',
-    category: 'Somber & Vulnerable',
-    description: 'Downturned melodic contours, heavy sighs, tender wistfulness',
-    pitchMod: 0.92,
-    rateMod: 0.88,
-  },
-  {
-    id: 'sorrowful',
-    label: 'Sorrowful & Heartbroken',
-    tag: '[sorrowful]',
-    category: 'Somber & Vulnerable',
-    description: 'Cracking voice, delicate tremor, gentle aching vulnerability',
-    pitchMod: 0.94,
-    rateMod: 0.85,
-  },
-  {
-    id: 'vulnerable',
-    label: 'Raw & Vulnerable',
-    tag: '[vulnerable]',
-    category: 'Somber & Vulnerable',
-    description: 'Exposed emotional honesty, quiet wavering breath, unguarded sincerity',
-    pitchMod: 0.96,
-    rateMod: 0.88,
-  },
-  {
-    id: 'anxious',
-    label: 'Anxious & Tremulous',
-    tag: '[anxious]',
-    category: 'Somber & Vulnerable',
-    description: 'Faltering breath, rapid nervous stutters, erratic rhythm',
-    pitchMod: 1.1,
-    rateMod: 1.08,
-  },
-  {
-    id: 'nostalgic',
-    label: 'Nostalgic & Bittersweet',
-    tag: '[nostalgic]',
-    category: 'Somber & Vulnerable',
-    description: 'Gentle smiling sadness, fond remembrance, mellow warmth',
-    pitchMod: 0.98,
-    rateMod: 0.92,
-  },
-  {
-    id: 'wistful',
-    label: 'Wistful & Longing',
-    tag: '[wistful]',
-    category: 'Somber & Vulnerable',
-    description: 'Dreamy bittersweet sighs, distant gazes turned inward, yearning melody',
-    pitchMod: 0.95,
-    rateMod: 0.9,
-  },
-  {
-    id: 'exhausted',
-    label: 'Weary & Exhausted',
-    tag: '[exhausted]',
-    category: 'Somber & Vulnerable',
-    description: 'Lethargic vocal cords, dry heavy cadence, barely above a murmur',
-    pitchMod: 0.88,
-    rateMod: 0.84,
-  },
-  {
-    id: 'solemn',
-    label: 'Solemn & Grave',
-    tag: '[solemn]',
-    category: 'Somber & Vulnerable',
-    description: 'Deep unyielding gravitas, unhurried weight, solemn reverence',
-    pitchMod: 0.86,
-    rateMod: 0.86,
-  },
-
-  // 5. Curious & Analytical
-  {
-    id: 'inquisitive',
-    label: 'Curious & Inquisitive',
-    tag: '[inquisitive]',
-    category: 'Curious & Analytical',
-    description: 'Rising question inflections, active mental probing, eager intellectual gaze',
-    pitchMod: 1.06,
-    rateMod: 1.04,
-  },
-  {
-    id: 'wonderstruck',
-    label: 'Cosmic Wonder',
-    tag: '[wonderstruck]',
-    category: 'Curious & Analytical',
-    description: 'Awe-struck inhalation, wide-eyed astonishment, galactic curiosity',
-    pitchMod: 1.08,
-    rateMod: 0.94,
-  },
-  {
-    id: 'philosophical',
-    label: 'Deeply Philosophical',
-    tag: '[philosophical]',
-    category: 'Curious & Analytical',
-    description: 'Abstract contemplation, weighed words, conceptual resonance',
-    pitchMod: 0.94,
-    rateMod: 0.9,
-  },
-  {
-    id: 'skeptical',
-    label: 'Skeptical & Piercing',
-    tag: '[skeptical]',
-    category: 'Curious & Analytical',
-    description: 'Scrutinizing sharp pauses, questioning inflection, razor intellect',
-    pitchMod: 0.98,
-    rateMod: 1.02,
-  },
-  {
-    id: 'clinical',
-    label: 'Detached & Analytical',
-    tag: '[clinical]',
-    category: 'Curious & Analytical',
-    description: 'Pure neutral objectivity, cool precision, clinical clarity',
-    pitchMod: 1.0,
-    rateMod: 1.0,
-  },
-  {
-    id: 'scholarly',
-    label: 'Scholarly & Erudite',
-    tag: '[scholarly]',
-    category: 'Curious & Analytical',
-    description: 'Articulate academic polish, deliberate syntactical precision, measured cadence',
-    pitchMod: 0.96,
-    rateMod: 0.96,
-  },
-  {
-    id: 'conspiratorial',
-    label: 'Conspiratorial Secret',
-    tag: '[conspiratorial]',
-    category: 'Curious & Analytical',
-    description: 'Leaning in, hushed intrigue, confidential conspiratorial cadence',
-    pitchMod: 0.95,
-    rateMod: 0.96,
-  },
+  { id: 'natural', label: 'Natural & Grounded', tag: '[natural]', category: 'Natural & Conversational', description: 'Balanced, spontaneous conversational flow', pitchMod: 1.0, rateMod: 1.0, volumeMod: 1.0 },
+  { id: 'excited', label: 'Excited & Electric', tag: '[excited]', category: 'High Energy & Expressive', description: 'Bright pitch elevation, animated', pitchMod: 1.15, rateMod: 1.12, volumeMod: 1.0 },
+  { id: 'whisper', label: 'Hushed Whisper', tag: '[whisper]', category: 'Natural & Conversational', description: 'Sub-vocal breathy whisper', pitchMod: 0.95, rateMod: 0.88, volumeMod: 0.7 },
+  { id: 'dramatic', label: 'Dramatic & High Tension', tag: '[dramatic]', category: 'Dramatic & Theatrical', description: 'Heightened theatrical gravity', pitchMod: 1.05, rateMod: 0.95, volumeMod: 1.0 },
+  { id: 'noir', label: 'Retro Noir & Smoky', tag: '[noir]', category: 'Dramatic & Theatrical', description: 'Smoky, world-weary detective cadence', pitchMod: 0.88, rateMod: 0.9, volumeMod: 0.9 },
+  { id: 'playful', label: 'Playful & Teasing', tag: '[playful]', category: 'High Energy & Expressive', description: 'Mischievous upward lilt', pitchMod: 1.08, rateMod: 1.05, volumeMod: 1.0 },
+  { id: 'warm', label: 'Warm & Empathetic', tag: '[warm]', category: 'Natural & Conversational', description: 'Soothing resonance, compassionate', pitchMod: 1.02, rateMod: 0.95, volumeMod: 1.0 },
+  { id: 'urgent', label: 'Urgent & Crisis', tag: '[urgent]', category: 'Dramatic & Theatrical', description: 'Rapid-fire clipped delivery', pitchMod: 1.12, rateMod: 1.2, volumeMod: 1.1 },
+  { id: 'melancholic', label: 'Melancholic & Yearning', tag: '[melancholic]', category: 'Somber & Vulnerable', description: 'Downturned melodic contours', pitchMod: 0.92, rateMod: 0.88, volumeMod: 0.8 },
+  { id: 'inquisitive', label: 'Curious & Inquisitive', tag: '[inquisitive]', category: 'Curious & Analytical', description: 'Rising question inflections', pitchMod: 1.06, rateMod: 1.04, volumeMod: 1.0 },
 ];
 
-const STORAGE_KEY = 'lila_selected_mood_id';
+export function getSavedMoods(): MoodOption[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return EXHAUSTIVE_MOODS;
+    return JSON.parse(raw);
+  } catch {
+    return EXHAUSTIVE_MOODS;
+  }
+}
+
+export function saveMood(mood: MoodOption) {
+  const existing = getSavedMoods();
+  const updated = [...existing.filter(m => m.id !== mood.id), mood];
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+}
+
+export function deleteMood(id: string) {
+  const existing = getSavedMoods();
+  const updated = existing.filter(m => m.id !== id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+}
 
 export function getSavedMoodId(): string {
-  return localStorage.getItem(STORAGE_KEY) || 'natural';
+  return localStorage.getItem(SELECTED_MOOD_KEY) || 'natural';
 }
 
 export function saveMoodId(id: string): void {
-  localStorage.setItem(STORAGE_KEY, id);
+  localStorage.setItem(SELECTED_MOOD_KEY, id);
 }
 
 export function getMoodById(id: string): MoodOption {
-  return EXHAUSTIVE_MOODS.find(m => m.id === id) || EXHAUSTIVE_MOODS[0];
+  const moods = getSavedMoods();
+  return moods.find(m => m.id === id) || moods[0];
 }
 
 export const MOOD_CATEGORIES = [
-  'All',
   'Natural & Conversational',
   'High Energy & Expressive',
   'Dramatic & Theatrical',
   'Somber & Vulnerable',
   'Curious & Analytical',
+  'Custom',
 ] as const;

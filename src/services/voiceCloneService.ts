@@ -314,6 +314,7 @@ function fallbackSpeechSynthesis(
 
     utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch * pitchMod));
     utterance.rate = Math.max(0.6, Math.min(1.5, baseRate * rateMod));
+    utterance.volume = Math.max(0.0, Math.min(1.0, mood?.volumeMod ?? 1.0));
 
     const voices = window.speechSynthesis.getVoices();
     
