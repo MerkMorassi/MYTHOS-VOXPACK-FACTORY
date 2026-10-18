@@ -379,6 +379,22 @@ export const PersonaManager: React.FC<PersonaManagerProps> = ({ onPersonaChanged
 
                   <div className="flex items-center gap-1.5">
                     <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const blob = new Blob([JSON.stringify(p, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `persona_${p.name.replace(/\s+/g, '_').toLowerCase()}_${Date.now()}.json`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="p-2 rounded-lg text-slate-400 hover:text-violet-300 hover:bg-slate-800 transition-colors"
+                      title="Export Persona"
+                    >
+                      <Upload className="w-4 h-4" />
+                    </button>
+                    <button
                       onClick={() => handleStartEdit(p)}
                       className="p-2 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
                       title="Edit Persona"

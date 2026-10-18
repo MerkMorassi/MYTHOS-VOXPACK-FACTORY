@@ -324,17 +324,34 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
       </div>
 
       {/* Test Phrase Input */}
-      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2">
-        <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
-          <Sparkles className="w-3.5 h-3.5 text-violet-400" /> Test Speech Synthesizer Phrase:
-        </label>
+      <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 space-y-3">
         <div className="flex gap-2">
-          <input
-            type="text"
-            value={testText}
-            onChange={(e) => setTestText(e.target.value)}
-            className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
-          />
+          <div className="flex-1 space-y-2">
+            <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-violet-400" /> Test Speech Synthesizer Phrase:
+            </label>
+            <input
+              type="text"
+              value={testText}
+              onChange={(e) => setTestText(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+            />
+          </div>
+          <div className="w-48 space-y-2">
+            <label className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+              <Headphones className="w-3.5 h-3.5 text-emerald-400" /> Fallback Voice:
+            </label>
+            <select
+              value={selectedVoice.fallbackVoice || ''}
+              onChange={(e) => handleFieldChange(selectedVoice.id, { fallbackVoice: e.target.value })}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-violet-500"
+            >
+              <option value="">Default System Voice</option>
+              {window.speechSynthesis.getVoices().map((v) => (
+                <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 

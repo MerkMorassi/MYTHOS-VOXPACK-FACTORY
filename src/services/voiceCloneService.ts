@@ -8,6 +8,7 @@ export interface VoiceProfile {
   tone: 'warm' | 'bright' | 'deep' | 'velvet' | 'neutral';
   baseVoice: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
   vocalStyle: string; // Style prompt for neural TTS
+  fallbackVoice?: string; // Browser-native voice name
   duration: number;
   createdAt: number;
 }
@@ -315,19 +316,27 @@ function fallbackSpeechSynthesis(
     utterance.rate = Math.max(0.6, Math.min(1.5, baseRate * rateMod));
 
     const voices = window.speechSynthesis.getVoices();
-    const femaleVoice = voices.find(v => 
-      v.lang.startsWith('en') && (
-        v.name.toLowerCase().includes('female') || 
-        v.name.toLowerCase().includes('samantha') || 
-        v.name.toLowerCase().includes('victoria') || 
-        v.name.toLowerCase().includes('karen') || 
-        v.name.toLowerCase().includes('zira') || 
-        v.name.toLowerCase().includes('google uk english female')
-      )
-    ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
+    
+    // 1. Try to use profile's specified fallback voice
+    let selectedVoice = voices.find(v => v.name === profile.fallbackVoice);
 
-    if (femaleVoice) {
-      utterance.voice = femaleVoice;
+    // 2. Fallback to generic English female voice if not found
+    if (!selectedVoice) {
+      selectedVoice = voices.find(v => 
+        v.lang.startsWith('en') && (
+          v.name.toLowerCase().includes('female') || 
+          v.name.toLowerCase().includes('samantha') || 
+          v.name.toLowerCase().includes('victoria') || 
+          v.name.toLowerCase().includes('karen') || 
+          v.name.toLowerCase().includes('zira') || 
+          v.name.toLowerCase().includes('google english british') ||
+          v.name.toLowerCase().includes('google uk english female')
+        )
+      ) || voices.find(v => v.lang.startsWith('en')) || voices[0];
+    }
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
     }
 
     utterance.onend = () => {

@@ -914,6 +914,26 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
         {showManualInput && (
           <form onSubmit={handleSubmit} className="sticky bottom-4 z-40">
+            <div className="flex flex-wrap gap-1.5 mb-2 px-1">
+              {['natural', 'excited', 'whisper', 'dramatic', 'noir', 'playful', 'warm'].map((id) => {
+                const mood = getMoodById(id);
+                const isSelected = mood.id === selectedMood.id;
+                return (
+                  <button
+                    key={mood.id}
+                    type="button"
+                    onClick={() => onSelectMood(mood)}
+                    className={`px-3 py-1 rounded-full text-[10px] font-medium transition-all ${
+                      isSelected
+                        ? 'bg-violet-600 text-white shadow-md shadow-violet-600/30'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {mood.tag} {mood.label.split('&')[0].trim()}
+                  </button>
+                );
+              })}
+            </div>
             <div className="flex gap-3 p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-2xl backdrop-blur-md">
               <input
                 type="text"
