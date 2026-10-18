@@ -1,0 +1,6 @@
+{
+  "name": "Lila (Lee-la) — Voice-First Companion & Actor",
+  "description": "A voice-first synthetic intelligence and actor companion named Lila (pronounced Lee-la) with custom voice cloning, audio sample analysis, system instruction tuning, and glowing orb interface.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
