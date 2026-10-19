@@ -74,6 +74,7 @@ interface ChatViewProps {
   onDeleteSession?: (id: string) => void;
   selectedMood: MoodOption;
   onSelectMood: (mood: MoodOption) => void;
+  onOpenMoodManager?: () => void;
 }
 
 export const ChatView: React.FC<ChatViewProps> = ({
@@ -102,6 +103,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onDeleteSession,
   selectedMood,
   onSelectMood,
+  onOpenMoodManager,
 }) => {
   const [inputText, setInputText] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
@@ -422,7 +424,20 @@ export const ChatView: React.FC<ChatViewProps> = ({
               {/* Informational Footer */}
               <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[10px] text-slate-500">
                 <span>{filteredMoods.length} moods shown ({EXHAUSTIVE_MOODS.length} total)</span>
-                <span className="text-violet-400/80 font-mono">Prepends prosody tag</span>
+                {onOpenMoodManager ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMoodDropdown(false);
+                      onOpenMoodManager();
+                    }}
+                    className="text-violet-400 hover:text-violet-300 font-medium underline flex items-center gap-1"
+                  >
+                    View All 100 Cards →
+                  </button>
+                ) : (
+                  <span className="text-violet-400/80 font-mono">Prepends prosody tag</span>
+                )}
               </div>
             </div>
           )}

@@ -3,8 +3,8 @@ import { Mic, Sparkles, MessageSquare, BookOpen, BrainCircuit } from 'lucide-rea
 import { Persona } from '../services/personaStore';
 
 interface HeaderProps {
-  activeTab: 'companion' | 'studio' | 'lore' | 'personas';
-  setActiveTab: (tab: 'companion' | 'studio' | 'lore' | 'personas') => void;
+  activeTab: 'companion' | 'studio' | 'lore' | 'personas' | 'moods';
+  setActiveTab: (tab: 'companion' | 'studio' | 'lore' | 'personas' | 'moods') => void;
   activeMode: 'off-stage' | 'on-stage';
   setActiveMode: (mode: 'off-stage' | 'on-stage') => void;
   activePersona?: Persona;
@@ -69,6 +69,12 @@ export const Header: React.FC<HeaderProps> = ({
           className={`transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${activeTab === 'studio' ? 'text-violet-400 font-semibold' : 'hover:text-slate-100'}`}
         >
           <Mic className="w-4 h-4" /> Voice Studio
+        </button>
+        <button 
+          onClick={() => setActiveTab('moods')}
+          className={`transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5 ${activeTab === 'moods' ? 'text-violet-400 font-semibold' : 'hover:text-slate-100'}`}
+        >
+          <Sparkles className="w-4 h-4" /> Prosody Moods
         </button>
         <button 
           onClick={() => setActiveTab('lore')}

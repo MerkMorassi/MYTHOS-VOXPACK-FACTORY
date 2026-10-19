@@ -21,7 +21,7 @@ export interface CloningProgress {
   percent: number;
 }
 
-import { MoodOption } from './moodStore';
+import { MoodOption, extractContextualProsody } from './moodStore';
 
 let activeAudioElement: HTMLAudioElement | null = null;
 let isNeuralQuotaExhausted = false;
@@ -206,6 +206,10 @@ export async function speakWithVoiceProfile(
   onEnd?: () => void,
   mood?: MoodOption
 ) {
+  // Extract contextual prosody if present (e.g., "[joyful] Good morning!")
+  const { cleanText, mood: detectedMood } = extractContextualProsody(text);
+  const effectiveMood = mood || detectedMood;
+
   // Increment session token to invalidate any previous or race audio calls
   const thisSessionId = ++currentPlaybackSessionId;
   stopCurrentAudio();
@@ -226,9 +230,9 @@ export async function speakWithVoiceProfile(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text,
+          text: cleanText,
           voiceProfile: profile,
-          mood,
+          mood: effectiveMood,
         }),
       });
 
@@ -302,19 +306,23 @@ function fallbackSpeechSynthesis(
     return;
   }
 
+  // Extract contextual prosody if present and strip tag from utterance
+  const { cleanText, mood: detectedMood } = extractContextualProsody(text);
+  const effectiveMood = mood || detectedMood;
+
   try {
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(cleanText);
     
     // Modulate pitch and tempo with selected emotional mood
     const basePitch = profile.pitch || 1.0;
     const baseRate = profile.rate || 1.0;
-    const pitchMod = mood?.pitchMod ?? 1.0;
-    const rateMod = mood?.rateMod ?? 1.0;
+    const pitchMod = effectiveMood?.pitchMod ?? 1.0;
+    const rateMod = effectiveMood?.rateMod ?? 1.0;
 
     utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch * pitchMod));
     utterance.rate = Math.max(0.6, Math.min(1.5, baseRate * rateMod));
-    utterance.volume = Math.max(0.0, Math.min(1.0, mood?.volumeMod ?? 1.0));
+    utterance.volume = Math.max(0.0, Math.min(1.0, effectiveMood?.volumeMod ?? 1.0));
 
     const voices = window.speechSynthesis.getVoices();
     

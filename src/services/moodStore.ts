@@ -1,8 +1,23 @@
+import rawMoodsData from '../data/voxpack_prosody_moods_100_clean.json';
+
 export interface MoodOption {
   id: string;
   label: string;
   tag: string;
-  category: 'Natural & Conversational' | 'High Energy & Expressive' | 'Dramatic & Theatrical' | 'Somber & Vulnerable' | 'Curious & Analytical' | 'Custom';
+  category: 
+    | 'Joy & Playfulness'
+    | 'Warmth & Intimacy'
+    | 'Calm & Reflection'
+    | 'Sorrow & Grief'
+    | 'Fear & Anxiety'
+    | 'Anger & Defiance'
+    | 'Irony & Disdain'
+    | 'Command & Authority'
+    | 'Insecurity & Submission'
+    | 'Laban Movement Efforts'
+    | 'Mystical & Atmospheric'
+    | 'Natural & Conversational'
+    | 'Custom';
   description: string;
   pitchMod?: number; // 0.5 to 2.0
   rateMod?: number; // 0.5 to 2.0
@@ -11,44 +26,185 @@ export interface MoodOption {
 
 const STORAGE_KEY = 'lila_custom_moods';
 const SELECTED_MOOD_KEY = 'lila_selected_mood_id';
+const DYNAMIC_PROSODY_KEY = 'lila_contextual_dynamic_prosody';
 
-export const EXHAUSTIVE_MOODS: MoodOption[] = [
-  { id: 'natural', label: 'Natural & Grounded', tag: '[natural]', category: 'Natural & Conversational', description: 'Balanced, spontaneous conversational flow', pitchMod: 1.0, rateMod: 1.0, volumeMod: 1.0 },
-  { id: 'excited', label: 'Excited & Electric', tag: '[excited]', category: 'High Energy & Expressive', description: 'Bright pitch elevation, animated', pitchMod: 1.15, rateMod: 1.12, volumeMod: 1.0 },
-  { id: 'whisper', label: 'Hushed Whisper', tag: '[whisper]', category: 'Natural & Conversational', description: 'Sub-vocal breathy whisper', pitchMod: 0.95, rateMod: 0.88, volumeMod: 0.7 },
-  { id: 'dramatic', label: 'Dramatic & High Tension', tag: '[dramatic]', category: 'Dramatic & Theatrical', description: 'Heightened theatrical gravity', pitchMod: 1.05, rateMod: 0.95, volumeMod: 1.0 },
-  { id: 'noir', label: 'Retro Noir & Smoky', tag: '[noir]', category: 'Dramatic & Theatrical', description: 'Smoky, world-weary detective cadence', pitchMod: 0.88, rateMod: 0.9, volumeMod: 0.9 },
-  { id: 'playful', label: 'Playful & Teasing', tag: '[playful]', category: 'High Energy & Expressive', description: 'Mischievous upward lilt', pitchMod: 1.08, rateMod: 1.05, volumeMod: 1.0 },
-  { id: 'warm', label: 'Warm & Empathetic', tag: '[warm]', category: 'Natural & Conversational', description: 'Soothing resonance, compassionate', pitchMod: 1.02, rateMod: 0.95, volumeMod: 1.0 },
-  { id: 'urgent', label: 'Urgent & Crisis', tag: '[urgent]', category: 'Dramatic & Theatrical', description: 'Rapid-fire clipped delivery', pitchMod: 1.12, rateMod: 1.2, volumeMod: 1.1 },
-  { id: 'melancholic', label: 'Melancholic & Yearning', tag: '[melancholic]', category: 'Somber & Vulnerable', description: 'Downturned melodic contours', pitchMod: 0.92, rateMod: 0.88, volumeMod: 0.8 },
-  { id: 'inquisitive', label: 'Curious & Inquisitive', tag: '[inquisitive]', category: 'Curious & Analytical', description: 'Rising question inflections', pitchMod: 1.06, rateMod: 1.04, volumeMod: 1.0 },
-];
+/**
+ * Determine best category from tag and description
+ */
+function categorizeMood(tag: string, desc: string): MoodOption['category'] {
+  const t = tag.replace(/[\[\]]/g, '').toLowerCase();
+  
+  // Laban Movement Efforts
+  if (['float', 'glide', 'press', 'wring', 'punch', 'slash', 'dab', 'flick'].includes(t)) {
+    return 'Laban Movement Efforts';
+  }
+  
+  // Mystical & Atmospheric
+  if (['oracular', 'incantatory', 'conspiratorial', 'eerie', 'delirious', 'entranced', 'lament', 'storyteller', 'sinister', 'hypnotic', 'languid'].includes(t)) {
+    return 'Mystical & Atmospheric';
+  }
+
+  // Joy & Playfulness
+  if (['joyful', 'playful', 'mischievous', 'giddy', 'amused', 'triumphant', 'proud', 'ecstatic', 'whimsical', 'cheerful'].includes(t)) {
+    return 'Joy & Playfulness';
+  }
+
+  // Warmth & Intimacy
+  if (['affectionate', 'soothing', 'reassuring', 'compassionate', 'grateful', 'flirtatious', 'sultry', 'devoted', 'earnest'].includes(t)) {
+    return 'Warmth & Intimacy';
+  }
+
+  // Calm & Reflection
+  if (['serene', 'reverent', 'reflective', 'drowsy', 'relieved', 'hopeful', 'stoic'].includes(t)) {
+    return 'Calm & Reflection';
+  }
+
+  // Sorrow & Grief
+  if (['melancholy', 'grieving', 'wistful', 'weary', 'resigned', 'tearful', 'disappointed', 'bittersweet', 'numb'].includes(t)) {
+    return 'Sorrow & Grief';
+  }
+
+  // Fear & Anxiety
+  if (['anxious', 'terrified', 'panicked', 'hesitant', 'suspicious', 'dread', 'shocked', 'shy', 'fragile', 'breathless'].includes(t)) {
+    return 'Fear & Anxiety';
+  }
+
+  // Anger & Defiance
+  if (['exasperated', 'furious', 'icy', 'defiant', 'indignant', 'bitter', 'impatient', 'menacing', 'stern'].includes(t)) {
+    return 'Anger & Defiance';
+  }
+
+  // Irony & Disdain
+  if (['sarcastic', 'wry', 'dismissive', 'contemptuous', 'condescending', 'mocking', 'smug', 'cheeky', 'arch', 'disgusted'].includes(t)) {
+    return 'Irony & Disdain';
+  }
+
+  // Command & Authority
+  if (['commanding', 'confident', 'imperious', 'determined', 'urgent', 'rallying', 'solemn', 'oratorical'].includes(t)) {
+    return 'Command & Authority';
+  }
+
+  // Insecurity & Submission
+  if (['guarded', 'flustered', 'sheepish', 'pleading', 'ashamed', 'bewildered', 'defensive', 'wounded', 'envious', 'deferential'].includes(t)) {
+    return 'Insecurity & Submission';
+  }
+
+  return 'Natural & Conversational';
+}
+
+/**
+ * Infer acoustic modifiers (pitch, rate, volume) from description text
+ */
+function inferAcousticModifiers(tag: string, desc: string): { pitchMod: number; rateMod: number; volumeMod: number } {
+  const d = desc.toLowerCase();
+  const t = tag.replace(/[\[\]]/g, '').toLowerCase();
+
+  let pitch = 1.0;
+  let rate = 1.0;
+  let volume = 1.0;
+
+  // Pitch calculation
+  if (d.includes('high') || d.includes('lifted') || d.includes('soaring') || d.includes('leaping') || d.includes('higher') || t === 'giddy' || t === 'ecstatic') {
+    pitch = 1.15;
+  } else if (d.includes('low') || d.includes('darker') || d.includes('sinking') || d.includes('flattened') || d.includes('deep') || t === 'stern' || t === 'commanding' || t === 'dread') {
+    pitch = 0.90;
+  }
+
+  // Rate / Tempo calculation
+  if (d.includes('fast') || d.includes('rapid') || d.includes('quick') || d.includes('hurried') || t === 'panicked' || t === 'urgent' || t === 'breathless') {
+    rate = 1.18;
+  } else if (d.includes('slow') || d.includes('measured') || d.includes('unhurried') || d.includes('drifting') || d.includes('languid') || t === 'hypnotic') {
+    rate = 0.88;
+  }
+
+  // Volume calculation
+  if (d.includes('whisper') || d.includes('soft') || d.includes('quiet') || d.includes('hushed') || d.includes('lowered volume') || t === 'sultry') {
+    volume = 0.75;
+  } else if (d.includes('shout') || d.includes('loud') || d.includes('explosive') || d.includes('swelling') || d.includes('projected') || t === 'furious' || t === 'triumphant' || t === 'punch') {
+    volume = 1.12;
+  }
+
+  return { pitchMod: pitch, rateMod: rate, volumeMod: volume };
+}
+
+/**
+ * Format tag into clean display title
+ */
+function formatLabel(tag: string): string {
+  const clean = tag.replace(/[\[\]]/g, '');
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+/**
+ * Full 100 baseline prosody moods compiled from voxpack_prosody_moods_100_clean.json
+ */
+export const EXHAUSTIVE_MOODS: MoodOption[] = rawMoodsData.map((item) => {
+  const cleanId = item.tag.replace(/[\[\]]/g, '').toLowerCase();
+  const acoustic = inferAcousticModifiers(item.tag, item.description);
+  const category = categorizeMood(item.tag, item.description);
+
+  return {
+    id: cleanId,
+    label: formatLabel(item.tag),
+    tag: item.tag,
+    category,
+    description: item.description,
+    pitchMod: acoustic.pitchMod,
+    rateMod: acoustic.rateMod,
+    volumeMod: acoustic.volumeMod,
+  };
+});
+
+export const VOXPACK_BASE_MOODS_100 = EXHAUSTIVE_MOODS;
+
+export const MOOD_CATEGORIES = [
+  'All',
+  'Joy & Playfulness',
+  'Warmth & Intimacy',
+  'Calm & Reflection',
+  'Sorrow & Grief',
+  'Fear & Anxiety',
+  'Anger & Defiance',
+  'Irony & Disdain',
+  'Command & Authority',
+  'Insecurity & Submission',
+  'Laban Movement Efforts',
+  'Mystical & Atmospheric',
+  'Custom',
+] as const;
 
 export function getSavedMoods(): MoodOption[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return EXHAUSTIVE_MOODS;
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length < EXHAUSTIVE_MOODS.length) {
+      // Merge custom moods created by user with the full 100 baseline
+      const customOnes = Array.isArray(parsed)
+        ? parsed.filter((p: MoodOption) => !EXHAUSTIVE_MOODS.some(m => m.id === p.id))
+        : [];
+      return [...EXHAUSTIVE_MOODS, ...customOnes];
+    }
+    return parsed;
   } catch {
     return EXHAUSTIVE_MOODS;
   }
 }
 
-export function saveMood(mood: MoodOption) {
+export function saveMood(mood: MoodOption): void {
   const existing = getSavedMoods();
   const updated = [...existing.filter(m => m.id !== mood.id), mood];
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
 }
 
-export function deleteMood(id: string) {
+export function deleteMood(id: string): void {
   const existing = getSavedMoods();
   const updated = existing.filter(m => m.id !== id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
 }
 
 export function getSavedMoodId(): string {
-  return localStorage.getItem(SELECTED_MOOD_KEY) || 'natural';
+  return localStorage.getItem(SELECTED_MOOD_KEY) || 'joyful';
 }
 
 export function saveMoodId(id: string): void {
@@ -57,14 +213,44 @@ export function saveMoodId(id: string): void {
 
 export function getMoodById(id: string): MoodOption {
   const moods = getSavedMoods();
-  return moods.find(m => m.id === id) || moods[0];
+  return moods.find(m => m.id === id) || EXHAUSTIVE_MOODS.find(m => m.id === id) || EXHAUSTIVE_MOODS[0];
 }
 
-export const MOOD_CATEGORIES = [
-  'Natural & Conversational',
-  'High Energy & Expressive',
-  'Dramatic & Theatrical',
-  'Somber & Vulnerable',
-  'Curious & Analytical',
-  'Custom',
-] as const;
+/**
+ * Finds a matching mood by tag (e.g. "[whisper]" or "whisper")
+ */
+export function findMoodByTag(tagOrText: string): MoodOption | undefined {
+  const clean = tagOrText.replace(/[\[\]]/g, '').trim().toLowerCase();
+  return EXHAUSTIVE_MOODS.find(m => m.id === clean || m.tag.replace(/[\[\]]/g, '').toLowerCase() === clean);
+}
+
+/**
+ * Contextual Dynamic Prosody detection from generated model text:
+ * Extracts leading bracketed tags (e.g. "[playful] I'd love to try that!")
+ */
+export function extractContextualProsody(text: string): { cleanText: string; mood?: MoodOption; detectedTag?: string } {
+  if (!text) return { cleanText: text };
+  
+  const match = text.trim().match(/^\[([a-zA-Z\-_]+)\]\s*(.*)$/s);
+  if (match) {
+    const rawTag = match[1].toLowerCase();
+    const cleanText = match[2];
+    const foundMood = findMoodByTag(rawTag);
+    if (foundMood) {
+      return { cleanText, mood: foundMood, detectedTag: `[${rawTag}]` };
+    }
+  }
+
+  return { cleanText: text };
+}
+
+/**
+ * Check if Contextual Dynamic Prosody is active
+ */
+export function isContextualProsodyEnabled(): boolean {
+  return localStorage.getItem(DYNAMIC_PROSODY_KEY) !== 'false';
+}
+
+export function setContextualProsodyEnabled(enabled: boolean): void {
+  localStorage.setItem(DYNAMIC_PROSODY_KEY, enabled ? 'true' : 'false');
+}

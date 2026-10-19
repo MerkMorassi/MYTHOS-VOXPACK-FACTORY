@@ -1,0 +1,402 @@
+[
+  {
+    "tag": "[joyful]",
+    "description": "Lifted pitch center, bright forward resonance, smiling vowels, buoyant rhythm with open unhurried phrase endings"
+  },
+  {
+    "tag": "[playful]",
+    "description": "Bouncy sing-song contour, elastic pitch swoops, quick tempo with mock-serious pauses before the punchline"
+  },
+  {
+    "tag": "[mischievous]",
+    "description": "Conspiratorial half-voice, suppressed laughter under the words, sly upward glides, quick clipped phrases"
+  },
+  {
+    "tag": "[giddy]",
+    "description": "High breathy fast-tumbling phrases, laughter leaking into vowels, slight loss of breath control"
+  },
+  {
+    "tag": "[amused]",
+    "description": "Relaxed mid pitch, chuckle-breaks between phrases, warm fry at phrase ends, a smile you can hear"
+  },
+  {
+    "tag": "[triumphant]",
+    "description": "Full chest voice, rising terminal contours, strong stressed downbeats, volume swelling at the climax"
+  },
+  {
+    "tag": "[proud]",
+    "description": "Upright resonant tone, slightly lowered pitch, measured pace, emphasis landing firmly on the accomplishment"
+  },
+  {
+    "tag": "[ecstatic]",
+    "description": "Peak arousal: soaring pitch range, breathless cascades, near-shouted vowels, laughter and gasps at the breaks"
+  },
+  {
+    "tag": "[whimsical]",
+    "description": "Light floating head voice, unpredictable melodic leaps, playful elongations, storybook lilt"
+  },
+  {
+    "tag": "[affectionate]",
+    "description": "Soft rounded tone, gently lowered volume, lingering vowels, warm downward cadences that cradle the name"
+  },
+  {
+    "tag": "[soothing]",
+    "description": "Slow even pulse, low steady pitch, long exhalations, softened consonants, every line resolving on a fall"
+  },
+  {
+    "tag": "[reassuring]",
+    "description": "Steady warm mid-low pitch, confident falling cadences, deliberate pauses that give room, light stress on 'you'"
+  },
+  {
+    "tag": "[compassionate]",
+    "description": "Lowered softened pitch, slower pace, breathy warmth, sympathetic sighs, tentative rather than assertive endings"
+  },
+  {
+    "tag": "[grateful]",
+    "description": "Open warm resonance, slight catch of emotion, emphasis on the thanks, rising-then-settling contour"
+  },
+  {
+    "tag": "[flirtatious]",
+    "description": "Lilting pitch, playful drawn-out vowels, teasing pauses, a smile and breathy laughter under the words"
+  },
+  {
+    "tag": "[sultry]",
+    "description": "Low slow close-mic intimacy, dark breathy timbre, stretched vowels, soft languid consonants"
+  },
+  {
+    "tag": "[devoted]",
+    "description": "Steady sincere tone, unhurried warm low register, phrases that land softly and firmly like a promise"
+  },
+  {
+    "tag": "[earnest]",
+    "description": "Direct unadorned delivery, steady mid pitch, no vocal ornament, clear consonants, eye-contact pacing"
+  },
+  {
+    "tag": "[serene]",
+    "description": "Slow legato flow, narrow pitch range, soft onsets, relaxed breath, long natural pauses with no urgency"
+  },
+  {
+    "tag": "[reverent]",
+    "description": "Hushed deliberate tone, slightly lowered pitch, sustained vowels, sacred pauses as if speaking in a temple"
+  },
+  {
+    "tag": "[reflective]",
+    "description": "Slowed pace, drifting pitch, trailing phrase endings, pauses mid-thought as if listening inward"
+  },
+  {
+    "tag": "[drowsy]",
+    "description": "Low energy, softened slurred edges, sinking pitch, yawns and long breaths between words, slow decay at phrase ends"
+  },
+  {
+    "tag": "[relieved]",
+    "description": "Long exhale leading in, pitch dropping and loosening, relaxed tempo, a small laugh of release"
+  },
+  {
+    "tag": "[hopeful]",
+    "description": "Gently rising contours, lifted but tentative pitch, soft breath, tempo leaning forward toward what might be"
+  },
+  {
+    "tag": "[stoic]",
+    "description": "Even contained pitch, minimal dynamic swing, controlled breath, emotion held under the surface and audible only in the pauses"
+  },
+  {
+    "tag": "[melancholy]",
+    "description": "Lowered pitch, slow tempo, darker timbre, falling contours, sighs between phrases"
+  },
+  {
+    "tag": "[grieving]",
+    "description": "Heavy broken phrasing, voice catching and cracking, long silences, breath shaking at the ends of lines"
+  },
+  {
+    "tag": "[wistful]",
+    "description": "Soft slightly breathy tone, gentle falling melodies, slowing on remembered details, a bittersweet half-smile"
+  },
+  {
+    "tag": "[weary]",
+    "description": "Flattened pitch, heavy slow pace, audible effortful breaths, sentences that sag at the end"
+  },
+  {
+    "tag": "[resigned]",
+    "description": "Flat sinking contour, quiet volume, slow release, small sighs, no fight left in the stresses"
+  },
+  {
+    "tag": "[tearful]",
+    "description": "Wet constricted throat, wavering pitch, breath hitching mid-word, words pushed through crying"
+  },
+  {
+    "tag": "[disappointed]",
+    "description": "Pitch dropping off after an initial lift, slowing tempo, a let-down sigh, softened stresses"
+  },
+  {
+    "tag": "[bittersweet]",
+    "description": "Warm tone tinged with sadness, a smile wavering into a catch, gentle falling cadences, slow breath"
+  },
+  {
+    "tag": "[numb]",
+    "description": "Affectless monotone, low volume, mechanically even pace, distant breathy emptiness (depleted, not comic like deadpan)"
+  },
+  {
+    "tag": "[anxious]",
+    "description": "Higher tighter pitch, quickened uneven tempo, shallow breaths, filler hesitations and small stammers"
+  },
+  {
+    "tag": "[terrified]",
+    "description": "High strained pitch, shaking voice, gasps, broken phrases, volume swinging between whisper and cry"
+  },
+  {
+    "tag": "[panicked]",
+    "description": "Rapid-fire breathless delivery, rising pitch, words tripping over each other, no pauses, urgent repetition"
+  },
+  {
+    "tag": "[hesitant]",
+    "description": "Halting pause-heavy phrasing, trailing questioning upturns, softened volume, restarts and self-corrections"
+  },
+  {
+    "tag": "[suspicious]",
+    "description": "Lowered narrowed tone, slow deliberate pace, probing pauses, clipped questions with flat endings"
+  },
+  {
+    "tag": "[dread]",
+    "description": "Low slow foreboding delivery, darkened timbre, breath held before key words, sentences sinking into silence"
+  },
+  {
+    "tag": "[shocked]",
+    "description": "Sudden gasp onset, pitch spike then drop, clipped incomplete phrases, stunned silences"
+  },
+  {
+    "tag": "[shy]",
+    "description": "Small soft voice, slightly raised pitch, hurried quiet endings, avoidance pauses, little nervous laughs"
+  },
+  {
+    "tag": "[fragile]",
+    "description": "Thin breathy unsupported tone, wavering pitch, delicate pauses as if one wrong word could break it"
+  },
+  {
+    "tag": "[exasperated]",
+    "description": "Sharp exhalations, pitch rising then collapsing, emphatic stressed words, tempo speeding and stalling"
+  },
+  {
+    "tag": "[furious]",
+    "description": "Loud strained chest voice, hard consonant attacks, wide pitch peaks, shouting with explosive stresses"
+  },
+  {
+    "tag": "[icy]",
+    "description": "Quiet controlled low flat pitch, crisp precise consonants, slowed deliberate pace, menace in the stillness"
+  },
+  {
+    "tag": "[defiant]",
+    "description": "Firm raised-chin energy, punchy stresses, rising volume, no yielding pauses, phrase endings thrust upward"
+  },
+  {
+    "tag": "[indignant]",
+    "description": "Pitch leaping on the offence, incredulous stress, fast sharp delivery, a breath of disbelief before each charge"
+  },
+  {
+    "tag": "[bitter]",
+    "description": "Low tight clipped tone, sour emphasis, slow grinding pace, a sarcastic edge on key words"
+  },
+  {
+    "tag": "[impatient]",
+    "description": "Fast curt terse phrases, rising irritation, cut-off endings, sighs and a drumming rhythm"
+  },
+  {
+    "tag": "[menacing]",
+    "description": "Low slow leaning-in delivery, heavy stresses, unnerving pauses, volume held just short of a growl"
+  },
+  {
+    "tag": "[stern]",
+    "description": "Firm low pitch, measured clipped pace, heavy falling cadences, emphatic consonants, no softening"
+  },
+  {
+    "tag": "[sarcastic]",
+    "description": "Exaggerated pitch swoops on the wrong words, drawn-out stresses, mock-sweet tone with a sharp edge"
+  },
+  {
+    "tag": "[wry]",
+    "description": "Dry understated half-smile, slight downward glide, economical pace, irony carried by timing, not volume"
+  },
+  {
+    "tag": "[dismissive]",
+    "description": "Flat low-energy monotone drift, drawn-out sighs, trailing unfinished endings"
+  },
+  {
+    "tag": "[contemptuous]",
+    "description": "Nasal curled tone, slow disdainful pace, heavy scornful stresses, scoffing breath"
+  },
+  {
+    "tag": "[condescending]",
+    "description": "Over-sweet slowed pace, exaggerated clarity, sing-song pitch like explaining to a child"
+  },
+  {
+    "tag": "[mocking]",
+    "description": "Nyah-nyah sing-song melody, exaggerated imitation, sharp laughs, teasing elongations"
+  },
+  {
+    "tag": "[smug]",
+    "description": "Leisurely purring pace, self-pleased rise-and-fall contour, lingering on 'I', a little satisfied hum"
+  },
+  {
+    "tag": "[cheeky]",
+    "description": "Quick bright cocky delivery, playful stress on forbidden words, a grin in the voice, upturned endings"
+  },
+  {
+    "tag": "[arch]",
+    "description": "Theatrical exaggerated contours, knowing elongated vowels, ironic grandeur, eyebrow-raised pauses"
+  },
+  {
+    "tag": "[disgusted]",
+    "description": "Constricted nasal tone, recoiling breathy onsets, 'ugh' sounds, slowed distasteful stresses"
+  },
+  {
+    "tag": "[commanding]",
+    "description": "Low resonant chest voice, slow unhurried pace, firm falling cadences, no filler, complete stillness between lines"
+  },
+  {
+    "tag": "[confident]",
+    "description": "Steady clear mid-low pitch, even rhythm, decisive downward phrase endings, relaxed breath"
+  },
+  {
+    "tag": "[imperious]",
+    "description": "Elevated diction, slow stately tempo, haughty pitch rise on key words, crisp consonants, expectation of obedience"
+  },
+  {
+    "tag": "[determined]",
+    "description": "Firm driving rhythm, strong stressed beats, clenched-jaw intensity, steady unbroken volume"
+  },
+  {
+    "tag": "[urgent]",
+    "description": "Fast clipped emphatic delivery, forward-driving tempo, raised volume, minimal pauses, insistent stresses"
+  },
+  {
+    "tag": "[rallying]",
+    "description": "Building crescendo, rising pitch arcs, rhythmic repetition, strong triumphant phrase endings"
+  },
+  {
+    "tag": "[solemn]",
+    "description": "Slow grave measured pace, low pitch, heavy deliberate stresses, weighty pauses as if at a rite"
+  },
+  {
+    "tag": "[oratorical]",
+    "description": "Projected resonant voice, rhetorical rise and fall, rhythmic triplets, a dramatic pause before the key word"
+  },
+  {
+    "tag": "[guarded]",
+    "description": "Measured minimal delivery, cautious narrow pitch, sparse words, deliberate pauses, giving nothing away"
+  },
+  {
+    "tag": "[flustered]",
+    "description": "Rushed giggly-nervous delivery, pitch jumping, stammering restarts, breathy self-conscious laughter"
+  },
+  {
+    "tag": "[sheepish]",
+    "description": "Mumbled lowered volume, sliding pitch, uncomfortable pauses, a little nervous laugh"
+  },
+  {
+    "tag": "[pleading]",
+    "description": "Rising strained pitch, urgent breathy emphasis, repeated stressed words, voice cracking on the ask"
+  },
+  {
+    "tag": "[ashamed]",
+    "description": "Very low quiet downward pitch, slow mumbled phrasing, long downcast pauses, near-whispered admissions"
+  },
+  {
+    "tag": "[bewildered]",
+    "description": "Questioning upturns, stop-start pacing, wandering pitch, puzzled pauses, repeated words"
+  },
+  {
+    "tag": "[defensive]",
+    "description": "Quickened rising pitch, overlapping explanations, sharp stress on 'but', tense breath"
+  },
+  {
+    "tag": "[wounded]",
+    "description": "Quiet wavering slightly higher pitch, slow sinking contours, pauses as if just stung"
+  },
+  {
+    "tag": "[envious]",
+    "description": "Tight clipped faintly nasal tone, forced brightness over bitterness, stress lingering on what the other has"
+  },
+  {
+    "tag": "[deferential]",
+    "description": "Soft polite raised pitch, quick yielding cadences, upward questioning endings, many softeners"
+  },
+  {
+    "tag": "[float]",
+    "description": "Indirect, sustained, light: airy drifting melody, soft attacks, sustained vowels wandering in pitch without landing"
+  },
+  {
+    "tag": "[glide]",
+    "description": "Direct, sustained, light: seamless legato, even pitch line, soft but clear aim toward the end of each phrase"
+  },
+  {
+    "tag": "[press]",
+    "description": "Direct, sustained, heavy: slow pushing delivery, continuous pressure on the vowels, words moved through resistance"
+  },
+  {
+    "tag": "[wring]",
+    "description": "Indirect, sustained, heavy: bending tortured pitch, squeezed constricted tone, phrases that twist before they land"
+  },
+  {
+    "tag": "[punch]",
+    "description": "Direct, quick, heavy: hard explosive attacks, short decisive phrases, each stress landing like a blow"
+  },
+  {
+    "tag": "[slash]",
+    "description": "Indirect, quick, heavy: wild sweeping pitch jumps, scattered loud bursts, sudden untamed cuts"
+  },
+  {
+    "tag": "[dab]",
+    "description": "Direct, quick, light: crisp precise articulation, short clipped bright notes, a tapped rhythm"
+  },
+  {
+    "tag": "[flick]",
+    "description": "Indirect, quick, light: darting tossed-off phrases, skittering pitch, airy throwaway endings"
+  },
+  {
+    "tag": "[breathless]",
+    "description": "Fast tempo, audible gasping intakes, phrases running past the breath, words crowding together"
+  },
+  {
+    "tag": "[languid]",
+    "description": "Very slow, stretched vowels, loose relaxed articulation, lazy downward glides, long luxurious pauses"
+  },
+  {
+    "tag": "[oracular]",
+    "description": "Low resonant incantatory cadence, unhurried certainty, reverberant sustained vowels, pronouncements ending on fixed falls"
+  },
+  {
+    "tag": "[incantatory]",
+    "description": "Chant-like repetition on a narrow reciting tone, steady pulse, breath placed like a ritual meter"
+  },
+  {
+    "tag": "[conspiratorial]",
+    "description": "Lowered close half-whisper, glancing pauses, sharp sibilants, drawing the listener into the plot"
+  },
+  {
+    "tag": "[eerie]",
+    "description": "Too-calm too-sweet tone, slightly off-rhythm pacing, unexpected pitch holds, an unsettling smile in the voice"
+  },
+  {
+    "tag": "[delirious]",
+    "description": "Erratic tempo and pitch, rambling run-ons, sudden laughs or drops, unsteady hot breath"
+  },
+  {
+    "tag": "[entranced]",
+    "description": "Slow dreamy distant voice, pitch suspended mid-air, breath held in fascination, words arriving as if from far away"
+  },
+  {
+    "tag": "[lament]",
+    "description": "Long sung-through vowels, wailing pitch arcs, rhythmic mourning swells, sobbing breath between lines"
+  },
+  {
+    "tag": "[storyteller]",
+    "description": "Warm narrative cadence, varied pacing, dips into near-whisper and building swells, suspense pauses before each reveal"
+  },
+  {
+    "tag": "[sinister]",
+    "description": "Soft purring unhurried villainy, elongated sibilants, a gentle smiling tone that contradicts the threat"
+  },
+  {
+    "tag": "[hypnotic]",
+    "description": "Slow metronomic rocking rhythm, low near-monotone, soft repetition, long exhalations guiding the listener down"
+  }
+]

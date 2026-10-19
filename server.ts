@@ -65,7 +65,9 @@ app.post('/api/chat', async (req, res) => {
       ? `[RECOVERED LORE & KNOWLEDGE:\n${loreSnippets.map((l: any) => `- ${l.title}: ${l.content}`).join('\n')}\n]`
       : '';
 
-    const fullSystemInstruction = `${moodTag ? moodTag + '\n\n' : ''}${systemPrompt}\n\n${modeContext}\n${voiceContext}\n${loreContext}`;
+    const dynamicProsodyGuideline = `[CONTEXTUAL DYNAMIC PROSODY: You have access to the 100 Voxpack Prosody tags (e.g. [joyful], [playful], [mischievous], [whisper], [affectionate], [soothing], [furious], [wry], [oracular], [float], [punch], [storyteller], [hypnotic], etc.). Dynamically select and prepend the single most appropriate bracketed prosody tag at the beginning of your response (e.g. "[playful] ...") to steer your acoustic inflection and emotional delivery.]`;
+
+    const fullSystemInstruction = `${moodTag ? moodTag + '\n\n' : ''}${systemPrompt}\n\n${modeContext}\n${voiceContext}\n${dynamicProsodyGuideline}\n${loreContext}`;
 
     // Prepare history turns ensuring correct roles and non-empty content
     const rawTurns = (history || [])
@@ -146,8 +148,23 @@ app.post('/api/tts', async (req, res) => {
       return res.status(400).json({ error: 'Text is required for TTS' });
     }
 
+    // Extract any contextual prosody tag from text so TTS does not vocalize the brackets
+    let cleanText = text;
+    let effectiveMood = mood;
+    const tagMatch = text.match(/^\[([a-zA-Z\-_]+)\]\s*(.*)$/s);
+    if (tagMatch) {
+      const detectedTag = tagMatch[1].toLowerCase();
+      cleanText = tagMatch[2] || text;
+      if (!effectiveMood) {
+        effectiveMood = {
+          tag: `[${detectedTag}]`,
+          description: `Contextual ${detectedTag} dynamic vocal prosody`,
+        };
+      }
+    }
+
     const baseVoice = voiceProfile?.baseVoice || 'Kore';
-    const moodPrefix = mood?.tag ? `Spoken with ${mood.tag} emotional prosody (${mood.description || ''}). ` : '';
+    const moodPrefix = effectiveMood?.tag ? `Spoken with ${effectiveMood.tag} emotional prosody (${effectiveMood.description || ''}). ` : '';
     const stylePrompt = `${moodPrefix}${voiceProfile?.vocalStyle || 'Warm, authentic, natural conversational female voice'}`;
 
     const response = await ai.models.generateContent({
@@ -157,7 +174,7 @@ app.post('/api/tts', async (req, res) => {
           role: 'user',
           parts: [
             {
-              text: text,
+              text: cleanText,
               speechMetadata: {
                 style: stylePrompt,
               },

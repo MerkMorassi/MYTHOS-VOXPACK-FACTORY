@@ -529,6 +529,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
             onDeleteSession={handleDeleteSession}
             selectedMood={selectedMood}
             onSelectMood={handleSelectMood}
+            onOpenMoodManager={() => setActiveTab('moods')}
           />
         )}
 
