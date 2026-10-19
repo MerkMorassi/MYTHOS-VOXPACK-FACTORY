@@ -13,7 +13,8 @@ import {
   MoodOption, 
   EXHAUSTIVE_MOODS, 
   MOOD_CATEGORIES,
-  getMoodById 
+  getMoodById,
+  extractContextualProsody
 } from '../services/moodStore';
 import { 
   Sparkles, 
@@ -37,8 +38,10 @@ import {
   X,
   Filter,
   Search,
-  SlidersHorizontal
+  SlidersHorizontal,
+  PieChart as ChartPieIcon
 } from 'lucide-react';
+import { SessionMoodChart } from './SessionMoodChart';
 
 export interface Message {
   id: string;
@@ -46,6 +49,8 @@ export interface Message {
   content: string;
   mode: 'off-stage' | 'on-stage';
   timestamp: number;
+  moodTag?: string;
+  moodLabel?: string;
 }
 
 interface ChatViewProps {
@@ -112,6 +117,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   const [moodSearch, setMoodSearch] = useState('');
   const [moodCategoryFilter, setMoodCategoryFilter] = useState<string>('All');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showToneChart, setShowToneChart] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const moodDropdownRef = useRef<HTMLDivElement>(null);
@@ -222,7 +228,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   return (
     <div className="max-w-4xl mx-auto py-8 px-6 space-y-8 flex flex-col min-h-[calc(100vh-80px)]">
       {/* Top Status & Controls Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
         {/* Active Root Persona Badge */}
         <div 
           onClick={onOpenPersonaManager}
@@ -525,6 +531,24 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </div>
           )}
         </div>
+
+        {/* Tone Insights Button (Opens Recharts Pie Chart) */}
+        <button
+          type="button"
+          onClick={() => setShowToneChart(true)}
+          className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-md cursor-pointer hover:border-violet-500/50 hover:bg-slate-900 transition-all text-left group"
+          title="Open session tone & vocal prosody pie chart visualization"
+        >
+          <div className="w-7 h-7 rounded-lg bg-pink-500/20 border border-pink-500/40 flex items-center justify-center shrink-0">
+            <ChartPieIcon className="w-4 h-4 text-pink-300 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="text-[10px] text-slate-400 block leading-tight">Performance:</span>
+            <span className="text-xs font-bold text-slate-200 group-hover:text-pink-300 truncate block">
+              Tone Insights
+            </span>
+          </div>
+        </button>
       </div>
 
       {/* DEDICATED MOOD SELECTION DROPDOWN & PROSODY CONTROL BAR */}
@@ -887,6 +911,12 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     <span className={`text-[10px] px-2 py-0.5 rounded-full ${msg.mode === 'on-stage' ? 'bg-violet-950 text-violet-300 border border-violet-800' : 'bg-slate-800 text-slate-400'}`}>
                       {msg.mode === 'on-stage' ? 'On-Stage' : 'Off-Stage'}
                     </span>
+                    {isAssistant && (msg.moodTag || extractContextualProsody(msg.content).detectedTag) && (
+                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-950/90 text-amber-300 border border-amber-500/40 font-mono font-bold flex items-center gap-1 shadow-sm">
+                        <Sparkles className="w-2.5 h-2.5 text-amber-300" />
+                        {msg.moodTag || extractContextualProsody(msg.content).detectedTag}
+                      </span>
+                    )}
                   </div>
 
                   <div
@@ -969,6 +999,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
           </form>
         )}
       </div>
+
+      {/* Session Mood Recharts Visualization Modal */}
+      <SessionMoodChart
+        isOpen={showToneChart}
+        onClose={() => setShowToneChart(false)}
+        messages={messages}
+        sessionTitle={sessions.find(s => s.id === currentSessionId)?.title}
+      />
     </div>
   );
 };

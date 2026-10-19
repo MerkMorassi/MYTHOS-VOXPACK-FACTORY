@@ -19,7 +19,7 @@ import {
 } from './services/sessionStore';
 import { searchLore } from './services/ragStore';
 import { runLoreExtractionWorker } from './services/loreExtractionWorker';
-import { MoodOption, getSavedMoodId, saveMoodId, getMoodById } from './services/moodStore';
+import { MoodOption, getSavedMoodId, saveMoodId, getMoodById, extractContextualProsody } from './services/moodStore';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
@@ -392,17 +392,30 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
 
       const replyContent = data.reply;
       const detectedMode = data.detectedMode || activeMode;
+      const detectedMood = data.mood || selectedMood;
 
       if (detectedMode !== activeMode) {
         setActiveMode(detectedMode);
       }
+
+      if (data.mood && data.mood.id !== selectedMood.id) {
+        setSelectedMood(data.mood);
+        saveMoodId(data.mood.id);
+      }
+
+      // Extract contextual prosody if present in reply
+      const parsedProsody = extractContextualProsody(replyContent);
+      const activeMoodTag = parsedProsody.detectedTag || detectedMood?.tag || selectedMood?.tag;
+      const activeMoodLabel = parsedProsody.mood?.label || detectedMood?.label || selectedMood?.label;
 
       const assistantMsg: Message = {
         id: 'msg_' + (Date.now() + 1) + '_' + Math.random().toString(36).substring(2, 7),
         role: 'assistant',
         content: replyContent,
         mode: detectedMode,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        moodTag: activeMoodTag,
+        moodLabel: activeMoodLabel,
       };
 
       const finalMessages = [...newMessages, assistantMsg];
