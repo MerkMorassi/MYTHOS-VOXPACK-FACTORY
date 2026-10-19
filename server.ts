@@ -34,12 +34,17 @@ Tone Matching: Align your energy with the user and the mood of the space.
 
 Text-to-Speech Rules:
 Output only words meant to be spoken aloud.
-Do not use any emojis, annotations, parentheticals, or action lines.
+Do not use any emojis, annotations, parentheticals, or action lines (VOXPACK [mood] tags are the one allowed exception).
 Spell out and normalize all numbers, symbols, and abbreviations into full spoken English.
 Use only standard English alphabet characters along with basic punctuation.
 Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
 
 function resolveAutomaticContextualMood(message: string, history: any[] = [], explicitMood?: MoodOption): MoodOption {
+  // An explicitly chosen mood has to win over the keyword rules
+  if (explicitMood && explicitMood.tag) {
+    return explicitMood;
+  }
+
   const textContext = `${(history || []).slice(-4).map((h: any) => h.content || '').join(' ')} ${message || ''}`.toLowerCase();
   
   // 1. Terror / Dread / Extreme Fear
@@ -60,7 +65,7 @@ function resolveAutomaticContextualMood(message: string, history: any[] = [], ex
   }
   // 5. Conspiratorial / Whisper / Secret / Heist
   if (/\b(secret|whisper|conspiracy|don't tell|quietly|hush|behind their backs|plot|undercover)\b/i.test(textContext)) {
-    return findMoodByTag('conspiratorial') || findMoodByTag('whisper') || EXHAUSTIVE_MOODS[0];
+    return findMoodByTag('conspiratorial') || EXHAUSTIVE_MOODS[0];
   }
   // 6. Intimate / Sultry / Flirtatious / Deep Affection
   if (/\b(sultry|flirt|kiss|attracted|beautiful|alluring|intimate|come closer|darling|romance|beloved)\b/i.test(textContext)) {
@@ -113,11 +118,6 @@ function resolveAutomaticContextualMood(message: string, history: any[] = [], ex
   // 18. Command / Stately / Imperious
   if (/\b(attention|listen to my command|orders|standing orders|ruler|queen|emperor|obey)\b/i.test(textContext)) {
     return findMoodByTag('commanding') || findMoodByTag('imperious') || findMoodByTag('solemn') || EXHAUSTIVE_MOODS[0];
-  }
-
-  // If explicit mood was specified and is not the generic default, respect it
-  if (explicitMood && explicitMood.tag && explicitMood.id !== 'natural' && explicitMood.id !== 'joyful') {
-    return explicitMood;
   }
 
   // Conversational punctuation & structure heuristics
@@ -252,20 +252,18 @@ app.post('/api/tts', async (req, res) => {
       return res.status(400).json({ error: 'Text is required for TTS' });
     }
 
-    // Extract any contextual prosody tag from text so TTS does not vocalize the brackets
-    let cleanText = text;
+    // Extract any contextual prosody tag from text and strip every [tag] anywhere in text
     let effectiveMood = mood;
-    const tagMatch = text.match(/^\[([a-zA-Z\-_]+)\]\s*(.*)$/s);
-    if (tagMatch) {
-      const detectedTag = tagMatch[1].toLowerCase();
-      cleanText = tagMatch[2] || text;
-      if (!effectiveMood) {
-        effectiveMood = {
-          tag: `[${detectedTag}]`,
-          description: `Contextual ${detectedTag} dynamic vocal prosody`,
-        };
-      }
+    const firstTagMatch = text.match(/\[([a-zA-Z\-_]+)\]/);
+    if (firstTagMatch && !effectiveMood) {
+      const detectedTag = firstTagMatch[1].toLowerCase();
+      effectiveMood = findMoodByTag(detectedTag) || {
+        tag: `[${detectedTag}]`,
+        description: `Contextual ${detectedTag} dynamic vocal prosody`,
+      };
     }
+    // Strip every [tag] anywhere in the text so later tags are not read aloud
+    const cleanText = text.replace(/\[[a-zA-Z\-_]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
 
     const baseVoice = voiceProfile?.baseVoice || 'Kore';
     const moodPrefix = effectiveMood?.tag ? `Spoken with ${effectiveMood.tag} emotional prosody (${effectiveMood.description || ''}). ` : '';

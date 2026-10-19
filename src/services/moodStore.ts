@@ -103,24 +103,33 @@ function inferAcousticModifiers(tag: string, desc: string): { pitchMod: number; 
   let rate = 1.0;
   let volume = 1.0;
 
-  // Pitch calculation
-  if (d.includes('high') || d.includes('lifted') || d.includes('soaring') || d.includes('leaping') || d.includes('higher') || t === 'giddy' || t === 'ecstatic') {
+  // Pitch calculation with word-boundary checks
+  const hasHighPitch = /\b(high(er)?|lifted|soaring|leaping)\b/i.test(d) || t === 'giddy' || t === 'ecstatic';
+  const hasLowPitch = /\b(low(ered)?|darker|sinking|flattened|deep)\b/i.test(d) || t === 'stern' || t === 'commanding' || t === 'dread';
+
+  if (hasHighPitch) {
     pitch = 1.15;
-  } else if (d.includes('low') || d.includes('darker') || d.includes('sinking') || d.includes('flattened') || d.includes('deep') || t === 'stern' || t === 'commanding' || t === 'dread') {
+  } else if (hasLowPitch) {
     pitch = 0.90;
   }
 
-  // Rate / Tempo calculation
-  if (d.includes('fast') || d.includes('rapid') || d.includes('quick') || d.includes('hurried') || t === 'panicked' || t === 'urgent' || t === 'breathless') {
+  // Rate / Tempo calculation with word-boundary checks
+  const hasFastRate = (/\b(fast|rapid|quick(ened)?|hurried)\b/i.test(d) && !/\bunhurried\b/i.test(d)) || t === 'panicked' || t === 'urgent' || t === 'breathless';
+  const hasSlowRate = /\b(slow(ed|ing)?|measured|unhurried|drifting|languid)\b/i.test(d) || t === 'hypnotic';
+
+  if (hasFastRate) {
     rate = 1.18;
-  } else if (d.includes('slow') || d.includes('measured') || d.includes('unhurried') || d.includes('drifting') || d.includes('languid') || t === 'hypnotic') {
+  } else if (hasSlowRate) {
     rate = 0.88;
   }
 
-  // Volume calculation
-  if (d.includes('whisper') || d.includes('soft') || d.includes('quiet') || d.includes('hushed') || d.includes('lowered volume') || t === 'sultry') {
+  // Volume calculation with word-boundary checks
+  const hasLowVol = /\b(whisper(ing)?|soft(ened|ly)?|quiet(ly)?|hushed|lowered volume)\b/i.test(d) || t === 'sultry';
+  const hasHighVol = /\b(shout(ed|ing)?|loud(er)?|explosive|swelling|projected)\b/i.test(d) || t === 'furious' || t === 'triumphant' || t === 'punch';
+
+  if (hasLowVol) {
     volume = 0.75;
-  } else if (d.includes('shout') || d.includes('loud') || d.includes('explosive') || d.includes('swelling') || d.includes('projected') || t === 'furious' || t === 'triumphant' || t === 'punch') {
+  } else if (hasHighVol) {
     volume = 1.12;
   }
 
@@ -221,27 +230,31 @@ export function getMoodById(id: string): MoodOption {
  */
 export function findMoodByTag(tagOrText: string): MoodOption | undefined {
   const clean = tagOrText.replace(/[\[\]]/g, '').trim().toLowerCase();
-  return EXHAUSTIVE_MOODS.find(m => m.id === clean || m.tag.replace(/[\[\]]/g, '').toLowerCase() === clean);
+  const target = clean === 'whisper' ? 'conspiratorial' : clean;
+  return EXHAUSTIVE_MOODS.find(m => m.id === target || m.tag.replace(/[\[\]]/g, '').toLowerCase() === target);
 }
 
 /**
  * Contextual Dynamic Prosody detection from generated model text:
- * Extracts leading bracketed tags (e.g. "[playful] I'd love to try that!")
+ * Extracts first bracketed tag and strips every [tag] anywhere in the text.
  */
 export function extractContextualProsody(text: string): { cleanText: string; mood?: MoodOption; detectedTag?: string } {
   if (!text) return { cleanText: text };
   
-  const match = text.trim().match(/^\[([a-zA-Z\-_]+)\]\s*(.*)$/s);
-  if (match) {
-    const rawTag = match[1].toLowerCase();
-    const cleanText = match[2];
-    const foundMood = findMoodByTag(rawTag);
-    if (foundMood) {
-      return { cleanText, mood: foundMood, detectedTag: `[${rawTag}]` };
-    }
+  const firstMatch = text.match(/\[([a-zA-Z\-_]+)\]/);
+  let foundMood: MoodOption | undefined;
+  let detectedTag: string | undefined;
+
+  if (firstMatch) {
+    const rawTag = firstMatch[1].toLowerCase();
+    foundMood = findMoodByTag(rawTag);
+    detectedTag = `[${rawTag}]`;
   }
 
-  return { cleanText: text };
+  // Strip every [tag] anywhere in the text so later tags are not read aloud
+  const cleanText = text.replace(/\[[a-zA-Z\-_]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+
+  return { cleanText, mood: foundMood, detectedTag };
 }
 
 /**

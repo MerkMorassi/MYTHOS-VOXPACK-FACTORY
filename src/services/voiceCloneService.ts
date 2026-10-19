@@ -319,10 +319,16 @@ function fallbackSpeechSynthesis(
     const baseRate = profile.rate || 1.0;
     const pitchMod = effectiveMood?.pitchMod ?? 1.0;
     const rateMod = effectiveMood?.rateMod ?? 1.0;
+    const rawVolume = effectiveMood?.volumeMod ?? 1.0;
 
-    utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch * pitchMod));
-    utterance.rate = Math.max(0.6, Math.min(1.5, baseRate * rateMod));
-    utterance.volume = Math.max(0.0, Math.min(1.0, effectiveMood?.volumeMod ?? 1.0));
+    // Express loudness > 1.0 through elevated pitch and projection rate in browser fallback
+    const loudnessExcess = Math.max(0, rawVolume - 1.0);
+    const loudnessPitchMultiplier = 1.0 + loudnessExcess * 0.4;
+    const loudnessRateMultiplier = 1.0 + loudnessExcess * 0.25;
+
+    utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch * pitchMod * loudnessPitchMultiplier));
+    utterance.rate = Math.max(0.6, Math.min(1.5, baseRate * rateMod * loudnessRateMultiplier));
+    utterance.volume = Math.max(0.0, Math.min(1.0, rawVolume));
 
     const voices = window.speechSynthesis.getVoices();
     
