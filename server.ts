@@ -13,8 +13,16 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-const apiKey = process.env.GEMINI_API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+const defaultApiKey = process.env.GEMINI_API_KEY || '';
+let defaultAi = new GoogleGenAI({ apiKey: defaultApiKey });
+
+function getGenAIClient(req: express.Request): GoogleGenAI {
+  const customKey = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey;
+  if (customKey && typeof customKey === 'string' && customKey.trim().length > 0) {
+    return new GoogleGenAI({ apiKey: customKey.trim() });
+  }
+  return defaultAi;
+}
 
 const DEFAULT_LILA_PROMPT = `You are Lila (pronounced Lee-la), a synthetic intelligence and a skilled actor. You are a concise communicator and an active listener who values nuance and depth.
 
@@ -198,9 +206,11 @@ Ensure your vocal cadence, pitch inflection, and rhythm embody these characteris
     let reply = '';
     let lastErr: any = null;
 
+    const aiClient = getGenAIClient(req);
+
     for (const model of modelsToTry) {
       try {
-        const response = await ai.models.generateContent({
+        const response = await aiClient.models.generateContent({
           model,
           contents,
           config: {
@@ -254,7 +264,7 @@ app.post('/api/tts', async (req, res) => {
 
     // Extract any contextual prosody tag from text and strip every [tag] anywhere in text
     let effectiveMood = mood;
-    const firstTagMatch = text.match(/\[([a-zA-Z\-_]+)\]/);
+    const firstTagMatch = text.match(/\[([a-zA-Z\-_]+)(?::[0-9.]+)?(?:\s*[^\]]*)?\]/);
     if (firstTagMatch && !effectiveMood) {
       const detectedTag = firstTagMatch[1].toLowerCase();
       effectiveMood = findMoodByTag(detectedTag) || {
@@ -263,38 +273,57 @@ app.post('/api/tts', async (req, res) => {
       };
     }
     // Strip every [tag] anywhere in the text so later tags are not read aloud
-    const cleanText = text.replace(/\[[a-zA-Z\-_]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+    const cleanText = text.replace(/\[[^\]]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
 
     const baseVoice = voiceProfile?.baseVoice || 'Kore';
     const moodPrefix = effectiveMood?.tag ? `Spoken with ${effectiveMood.tag} emotional prosody (${effectiveMood.description || ''}). ` : '';
     const stylePrompt = `${moodPrefix}${voiceProfile?.vocalStyle || 'Warm, authentic, natural conversational female voice'}`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash-lite-tts',
-      contents: [
-        {
-          role: 'user',
-          parts: [
+    const ttsModels = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+    let response: any = null;
+    let lastTtsErr: any = null;
+    const aiClient = getGenAIClient(req);
+
+    for (const model of ttsModels) {
+      try {
+        response = await aiClient.models.generateContent({
+          model,
+          contents: [
             {
-              text: cleanText,
-              speechMetadata: {
-                style: stylePrompt,
-              },
+              role: 'user',
+              parts: [
+                {
+                  text: cleanText,
+                  speechMetadata: {
+                    style: stylePrompt,
+                  },
+                },
+              ],
             },
           ],
-        },
-      ],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: baseVoice },
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: { voiceName: baseVoice },
+              },
+            },
           },
-        },
-      },
-    });
+        });
+        if (response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+          break;
+        }
+      } catch (err: any) {
+        lastTtsErr = err;
+        console.warn(`TTS model ${model} unavailable, trying fallback:`, err?.message || err);
+      }
+    }
 
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!response && lastTtsErr) {
+      throw lastTtsErr;
+    }
+
+    const base64Audio = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     if (base64Audio) {
       res.json({ audio: base64Audio });
     } else {
@@ -327,7 +356,7 @@ Evaluate the speaker's vocal attributes:
 1. Vocal texture (warm, breathy, bright, deep, velvety, crisp, intimate).
 2. Perceived pitch multiplier (0.7 to 1.4, default 1.0).
 3. Pacing / speech speed multiplier (0.8 to 1.3, default 1.0).
-4. Best prebuilt base voice match from ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'] (Kore is feminine and warm, Puck is energetic/youthful, Charon is deep/grounded, Fenrir is intense/resonant, Zephyr is soft/airy).
+4. Best prebuilt base voice match from ['Kore', 'Aoede', 'Autonoe', 'Callirrhoe', 'Despina', 'Erinome', 'Laomedeia', 'Leda', 'Puck', 'Charon', 'Fenrir', 'Zephyr'] (Kore is feminine and warm, Aoede is lyrical/melodic, Autonoe is contemplative alto, Callirrhoe is velvety/alluring, Despina is crisp/commanding, Erinome is soft/tender, Laomedeia is stately/theatrical, Leda is vibrant/playful).
 5. A descriptive vocal style instruction string (1-2 sentences) instructing the TTS synthesizer how to deliver lines in this voice.
 
 Return strictly a JSON object:
@@ -341,7 +370,8 @@ Return strictly a JSON object:
   "description": "Vocal analysis summary"
 }`;
 
-    const response = await ai.models.generateContent({
+    const aiClient = getGenAIClient(req);
+    const response = await aiClient.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: [
         {
@@ -393,7 +423,8 @@ If none, return { "extractedFacts": [] }.
 Transcript:
 ${transcript}`;
 
-    const response = await ai.models.generateContent({
+    const aiClient = getGenAIClient(req);
+    const response = await aiClient.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
@@ -408,6 +439,40 @@ ${transcript}`;
     console.error('Extract lore error:', err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// Diagnostic endpoint to test and verify a Gemini API Key
+app.post('/api/verify-api-key', async (req, res) => {
+  try {
+    const keyToTest = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey || process.env.GEMINI_API_KEY || '';
+    if (!keyToTest) {
+      return res.status(400).json({ valid: false, error: 'No API key provided or configured in server environment' });
+    }
+    const testAI = new GoogleGenAI({ apiKey: keyToTest });
+    const result = await testAI.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }],
+      config: { maxOutputTokens: 5 }
+    });
+    if (result.text) {
+      return res.json({ valid: true, message: 'API Key successfully verified with Gemini API' });
+    }
+    res.status(400).json({ valid: false, error: 'Empty response received from model' });
+  } catch (err: any) {
+    console.error('API Key verification failed:', err?.message || err);
+    res.status(401).json({ valid: false, error: err?.message || 'Invalid API Key or unauthorized' });
+  }
+});
+
+// Endpoint to inspect runtime server credentials status
+app.get('/api/status', (req, res) => {
+  const hasServerEnvKey = !!process.env.GEMINI_API_KEY;
+  const clientKeyProvided = !!req.headers['x-gemini-api-key'];
+  res.json({
+    hasServerEnvKey,
+    clientKeyProvided,
+    status: 'ok',
+  });
 });
 
 if (process.env.NODE_ENV !== 'production') {

@@ -1,6 +1,7 @@
 import React from 'react';
-import { Mic, Sparkles, MessageSquare, BookOpen, BrainCircuit } from 'lucide-react';
+import { Mic, Sparkles, MessageSquare, BookOpen, BrainCircuit, Settings } from 'lucide-react';
 import { Persona } from '../services/personaStore';
+import { hasStoredApiKey } from '../services/apiKeyStore';
 
 interface HeaderProps {
   activeTab: 'companion' | 'studio' | 'lore' | 'personas' | 'moods';
@@ -9,6 +10,7 @@ interface HeaderProps {
   setActiveMode: (mode: 'off-stage' | 'on-stage') => void;
   activePersona?: Persona;
   selectedMood?: { id: string; label: string; tag: string };
+  onOpenSettings?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
@@ -18,6 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveMode,
   activePersona,
   selectedMood,
+  onOpenSettings,
 }) => {
   const personaName = activePersona?.name || 'LILA';
 
@@ -115,6 +118,20 @@ export const Header: React.FC<HeaderProps> = ({
           <span className={`w-2 h-2 rounded-full ${activeMode === 'on-stage' ? 'bg-white animate-pulse' : 'bg-slate-400'}`}></span>
           {activeMode === 'on-stage' ? 'On-Stage (Roleplay)' : 'Off-Stage (Base)'}
         </button>
+
+        {onOpenSettings && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="p-2 rounded-lg bg-slate-900 border border-slate-700 hover:border-violet-500/50 hover:bg-slate-800 text-slate-300 hover:text-white transition-all relative group shrink-0"
+            title="Gemini API Key & System Settings"
+          >
+            <Settings className="w-4 h-4 group-hover:rotate-45 transition-transform" />
+            {hasStoredApiKey() && (
+              <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-slate-950" />
+            )}
+          </button>
+        )}
       </div>
     </header>
   );

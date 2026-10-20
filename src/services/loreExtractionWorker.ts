@@ -1,4 +1,5 @@
 import { saveLoreDocument } from './ragStore';
+import { getApiAuthHeaders } from './apiKeyStore';
 
 let isRunning = false;
 let lastProcessedIndex = 0;
@@ -15,7 +16,7 @@ export async function runLoreExtractionWorker(messages: Array<{ role: string; co
 
     const res = await fetch('/api/extract-lore', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
       body: JSON.stringify({ transcript }),
     });
 

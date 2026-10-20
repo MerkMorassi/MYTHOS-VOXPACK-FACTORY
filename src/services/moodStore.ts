@@ -241,7 +241,7 @@ export function findMoodByTag(tagOrText: string): MoodOption | undefined {
 export function extractContextualProsody(text: string): { cleanText: string; mood?: MoodOption; detectedTag?: string } {
   if (!text) return { cleanText: text };
   
-  const firstMatch = text.match(/\[([a-zA-Z\-_]+)\]/);
+  const firstMatch = text.match(/\[([a-zA-Z\-_]+)(?::[0-9.]+)?(?:\s*[^\]]*)?\]/);
   let foundMood: MoodOption | undefined;
   let detectedTag: string | undefined;
 
@@ -252,7 +252,7 @@ export function extractContextualProsody(text: string): { cleanText: string; moo
   }
 
   // Strip every [tag] anywhere in the text so later tags are not read aloud
-  const cleanText = text.replace(/\[[a-zA-Z\-_]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
+  const cleanText = text.replace(/\[[^\]]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
 
   return { cleanText, mood: foundMood, detectedTag };
 }

@@ -20,11 +20,14 @@ import {
 import { searchLore } from './services/ragStore';
 import { runLoreExtractionWorker } from './services/loreExtractionWorker';
 import { MoodOption, getSavedMoodId, saveMoodId, getMoodById, extractContextualProsody } from './services/moodStore';
+import { getApiAuthHeaders } from './services/apiKeyStore';
+import { SettingsModal } from './components/SettingsModal';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
   const [activeMode, setActiveMode] = useState<'off-stage' | 'on-stage'>('off-stage');
   const [activePersona, setActivePersona] = useState<Persona>(() => getActivePersona());
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   const [orbTheme, setOrbTheme] = useState<OrbTheme>(() => {
     return (localStorage.getItem('lila_orb_theme') as OrbTheme) || localStorage.getItem('maya_orb_theme') || 'spectral';
@@ -375,7 +378,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
         body: JSON.stringify({
           message: text,
           mode: activeMode,
@@ -512,6 +515,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         setActiveMode={setActiveMode}
         activePersona={activePersona}
         selectedMood={selectedMood}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       <main className="flex-1">
@@ -565,6 +569,12 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         {activeTab === 'lore' && <LoreManager />}
         {activeTab === 'moods' && <MoodManager />}
       </main>
+
+      {/* Settings Modal (Gemini API Key & System Status) */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
     </div>
   );
 }

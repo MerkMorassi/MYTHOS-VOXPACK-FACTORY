@@ -1,3 +1,35 @@
+export type PrebuiltVoice = 
+  | 'Kore'
+  | 'Aoede'
+  | 'Autonoe'
+  | 'Callirrhoe'
+  | 'Despina'
+  | 'Erinome'
+  | 'Laomedeia'
+  | 'Leda'
+  | 'Puck'
+  | 'Charon'
+  | 'Fenrir'
+  | 'Zephyr';
+
+export const FEMALE_VOICE_MODELS = [
+  { id: 'Kore' as const, name: 'Kore', label: 'Kore (Default)', tone: 'Warm, clear, natural conversational female voice', description: 'Grounded, balanced, expressive' },
+  { id: 'Aoede' as const, name: 'Aoede', label: 'Aoede', tone: 'Lyrical, melodic, gentle poetic cadence', description: 'Graceful, resonant, artistic' },
+  { id: 'Autonoe' as const, name: 'Autonoe', label: 'Autonoe', tone: 'Rich, distinct, contemplative alto voice', description: 'Self-possessed, deliberate, nuanced' },
+  { id: 'Callirrhoe' as const, name: 'Callirrhoe', label: 'Callirrhoe', tone: 'Velvety, fluid, alluring conversational warmth', description: 'Smooth, breathy, intimate' },
+  { id: 'Despina' as const, name: 'Despina', label: 'Despina', tone: 'Crisp, articulate, bright commanding presence', description: 'Sharp, decisive, energetic' },
+  { id: 'Erinome' as const, name: 'Erinome', label: 'Erinome', tone: 'Soft, tender, vulnerable whisper-like timbre', description: 'Intimate, fragile, compassionate' },
+  { id: 'Laomedeia' as const, name: 'Laomedeia', label: 'Laomedeia', tone: 'Stately, measured, cinematic theatrical depth', description: 'Regal, authoritative, oratorical' },
+  { id: 'Leda' as const, name: 'Leda', label: 'Leda', tone: 'Vibrant, playful, warm youthful inflection', description: 'Engaging, spirited, cheerful' },
+];
+
+export const OTHER_VOICE_MODELS = [
+  { id: 'Puck' as const, name: 'Puck', label: 'Puck', tone: 'Playful, energetic, youthful', description: 'Bright, nimble' },
+  { id: 'Charon' as const, name: 'Charon', label: 'Charon', tone: 'Deep, resonant, measured baritone', description: 'Grounded, solemn' },
+  { id: 'Fenrir' as const, name: 'Fenrir', label: 'Fenrir', tone: 'Intense, dramatic, heavy timbre', description: 'Bold, commanding' },
+  { id: 'Zephyr' as const, name: 'Zephyr', label: 'Zephyr', tone: 'Soft, airy, cinematic alto', description: 'Intimate, atmospheric' },
+];
+
 export interface VoiceProfile {
   id: string;
   name: string;
@@ -6,7 +38,7 @@ export interface VoiceProfile {
   pitch: number; // 0.5 to 2.0
   rate: number; // 0.7 to 1.5
   tone: 'warm' | 'bright' | 'deep' | 'velvet' | 'neutral';
-  baseVoice: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
+  baseVoice: PrebuiltVoice;
   vocalStyle: string; // Style prompt for neural TTS
   fallbackVoice?: string; // Browser-native voice name
   duration: number;
@@ -22,6 +54,7 @@ export interface CloningProgress {
 }
 
 import { MoodOption, extractContextualProsody } from './moodStore';
+import { getApiAuthHeaders } from './apiKeyStore';
 
 let activeAudioElement: HTMLAudioElement | null = null;
 let isNeuralQuotaExhausted = false;
@@ -75,7 +108,7 @@ export async function uploadAndProcessVoiceSample(
     const audioBase64 = arrayBufferToBase64(arrayBuffer);
     const res = await fetch('/api/analyze-voice-sample', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
       body: JSON.stringify({
         audioBase64,
         mimeType: file.type || 'audio/wav',
@@ -145,8 +178,8 @@ export function deleteVoiceProfile(id: string): VoiceProfile[] {
 export function getDefaultProfiles(): VoiceProfile[] {
   return [
     {
-      id: 'default_maya',
-      name: 'Lila Prime (Default)',
+      id: 'default_kore',
+      name: 'Lila Prime (Kore)',
       sampleUrl: '',
       sampleFileName: 'built-in',
       pitch: 1.15,
@@ -158,8 +191,99 @@ export function getDefaultProfiles(): VoiceProfile[] {
       createdAt: Date.now(),
     },
     {
+      id: 'female_aoede',
+      name: 'Aoede (Melodic)',
+      sampleUrl: '',
+      sampleFileName: 'built-in',
+      pitch: 1.05,
+      rate: 0.95,
+      tone: 'warm',
+      baseVoice: 'Aoede',
+      vocalStyle: 'Lyrical, melodic female voice with gentle poetic cadence and open emotional resonance',
+      duration: 0,
+      createdAt: Date.now(),
+    },
+    {
+      id: 'female_autonoe',
+      name: 'Autonoe (Contemplative)',
+      sampleUrl: '',
+      sampleFileName: 'built-in',
+      pitch: 0.95,
+      rate: 0.92,
+      tone: 'deep',
+      baseVoice: 'Autonoe',
+      vocalStyle: 'Rich, contemplative female alto voice with thoughtful phrasing and deliberate depth',
+      duration: 0,
+      createdAt: Date.now(),
+    },
+    {
+      id: 'female_callirrhoe',
+      name: 'Callirrhoe (Velvet)',
+      sampleUrl: '',
+      sampleFileName: 'built-in',
+      pitch: 1.0,
+      rate: 0.9,
+      tone: 'velvet',
+      baseVoice: 'Callirrhoe',
+      vocalStyle: 'Velvety, fluid, alluring female voice with soft breathiness and close conversational warmth',
+      duration: 0,
+      createdAt: Date.now(),
+    },
+    {
+      id: 'female_despina',
+      name: 'Despina (Crisp)',
+      sampleUrl: '',
+      sampleFileName: 'built-in',
+      pitch: 1.1,
+      rate: 1.05,
+      tone: 'bright',
+      baseVoice: 'Despina',
+      vocalStyle: 'Crisp, articulate, bright commanding female voice with sharp diction and lively presence',
+      duration: 0,
+      createdAt: Date.now(),
+    },
+    {
+      id: 'female_erinome',
+      name: 'Erinome (Tender)',
+      sampleUrl: '',
+      sampleFileName: 'built-in',
+      pitch: 1.0,
+      rate: 0.88,
+      tone: 'warm',
+      baseVoice: 'Erinome',
+      vocalStyle: 'Soft, tender, vulnerable whisper-like female voice with intimate breath and delicate pacing',
+      duration: 0,
+      createdAt: Date.now(),
+    },
+    {
+      id: 'female_laomedeia',
+      name: 'Laomedeia (Stately)',
+      sampleUrl: '',
+      sampleFileName: 'built-in',
+      pitch: 0.92,
+      rate: 0.9,
+      tone: 'deep',
+      baseVoice: 'Laomedeia',
+      vocalStyle: 'Stately, measured, cinematic theatrical female voice with regal authority and oratorical weight',
+      duration: 0,
+      createdAt: Date.now(),
+    },
+    {
+      id: 'female_leda',
+      name: 'Leda (Vibrant)',
+      sampleUrl: '',
+      sampleFileName: 'built-in',
+      pitch: 1.2,
+      rate: 1.08,
+      tone: 'bright',
+      baseVoice: 'Leda',
+      vocalStyle: 'Vibrant, playful, warm youthful female voice with energetic inflection and engaging charm',
+      duration: 0,
+      createdAt: Date.now(),
+    },
+    {
       id: 'cinematic_alto',
-      name: 'Cinematic Alto',
+      name: 'Cinematic Alto (Zephyr)',
       sampleUrl: '',
       sampleFileName: 'built-in',
       pitch: 0.95,
@@ -228,7 +352,7 @@ export async function speakWithVoiceProfile(
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
         body: JSON.stringify({
           text: cleanText,
           voiceProfile: profile,

@@ -26,7 +26,9 @@ import {
   speakWithVoiceProfile, 
   saveVoiceProfile, 
   deleteVoiceProfile, 
-  stopCurrentAudio 
+  stopCurrentAudio,
+  FEMALE_VOICE_MODELS,
+  OTHER_VOICE_MODELS
 } from '../services/voiceCloneService';
 import { SystemPromptTuner } from './SystemPromptTuner';
 
@@ -439,13 +441,18 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
                             <select
                               value={p.baseVoice}
                               onChange={(e) => handleFieldChange(p.id, { baseVoice: e.target.value as any })}
-                              className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-0.5 text-[10px] text-slate-200 outline-none hover:border-violet-500"
+                              className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-0.5 text-[10px] text-slate-200 outline-none hover:border-violet-500 font-medium"
                             >
-                              <option value="Kore">Kore</option>
-                              <option value="Puck">Puck</option>
-                              <option value="Charon">Charon</option>
-                              <option value="Fenrir">Fenrir</option>
-                              <option value="Zephyr">Zephyr</option>
+                              <optgroup label="Female Voice Models">
+                                {FEMALE_VOICE_MODELS.map(vm => (
+                                  <option key={vm.id} value={vm.id}>{vm.name}</option>
+                                ))}
+                              </optgroup>
+                              <optgroup label="Other Voices">
+                                {OTHER_VOICE_MODELS.map(vm => (
+                                  <option key={vm.id} value={vm.id}>{vm.name}</option>
+                                ))}
+                              </optgroup>
                             </select>
                           </div>
                         </div>
