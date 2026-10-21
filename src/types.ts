@@ -1,3 +1,12 @@
+export type PauseTier = 'short' | 'normal' | 'marked' | 'long';
+export type Articulation = 'legato' | 'neutral' | 'staccato';
+
+export interface Pace {
+  rate: number;
+  pause: PauseTier;
+  articulation: Articulation;
+}
+
 export interface VoiceProfile {
   id: string;
   name: string;
@@ -30,3 +39,4 @@ export interface SystemInstructions {
   pacing: string;
   rules: string[];
 }
+

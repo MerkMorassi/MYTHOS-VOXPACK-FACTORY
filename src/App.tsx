@@ -419,6 +419,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         timestamp: Date.now(),
         moodTag: activeMoodTag,
         moodLabel: activeMoodLabel,
+        voxLine: data.voxLine,
       };
 
       const finalMessages = [...newMessages, assistantMsg];

@@ -14,7 +14,8 @@ import {
   EXHAUSTIVE_MOODS, 
   MOOD_CATEGORIES,
   getMoodById,
-  extractContextualProsody
+  extractContextualProsody,
+  findMoodByTag
 } from '../services/moodStore';
 import { 
   Sparkles, 
@@ -51,6 +52,7 @@ export interface Message {
   timestamp: number;
   moodTag?: string;
   moodLabel?: string;
+  voxLine?: any;
 }
 
 interface ChatViewProps {

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
 import { EXHAUSTIVE_MOODS, findMoodByTag, extractContextualProsody, MoodOption } from './src/services/moodStore';
+import { parseVoxLine } from './src/services/voxLineParser';
 
 dotenv.config();
 
@@ -47,96 +48,64 @@ Spell out and normalize all numbers, symbols, and abbreviations into full spoken
 Use only standard English alphabet characters along with basic punctuation.
 Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
 
-function resolveAutomaticContextualMood(message: string, history: any[] = [], explicitMood?: MoodOption): MoodOption {
-  // An explicitly chosen mood has to win over the keyword rules
+function resolveAutomaticContextualMood(message: string, history: any[] = [], explicitMood?: MoodOption, currentMood?: MoodOption): { mood: MoodOption; intensity: number } {
   if (explicitMood && explicitMood.tag) {
-    return explicitMood;
+    return { mood: explicitMood, intensity: 0.8 };
   }
 
   const textContext = `${(history || []).slice(-4).map((h: any) => h.content || '').join(' ')} ${message || ''}`.toLowerCase();
   
-  // 1. Terror / Dread / Extreme Fear
-  if (/\b(panic|terrified|nightmare|horror|dread|scared to death|monsters?|running for my life|shaking)\b/i.test(textContext)) {
-    return findMoodByTag('terrified') || findMoodByTag('dread') || EXHAUSTIVE_MOODS[0];
-  }
-  // 2. Heavy Grief / Mourning / Weeping
-  if (/\b(mourn|grief|died|crying|tears|sob|lost everything|funeral|devastated|heartbroken)\b/i.test(textContext)) {
-    return findMoodByTag('grieving') || findMoodByTag('tearful') || findMoodByTag('lament') || EXHAUSTIVE_MOODS[0];
-  }
-  // 3. Seething Rage / Furious / Betrayal
-  if (/\b(furious|rage|betrayed|how dare you|liar|hate you|screaming|unforgivable|traitor)\b/i.test(textContext)) {
-    return findMoodByTag('furious') || findMoodByTag('defiant') || findMoodByTag('indignant') || EXHAUSTIVE_MOODS[0];
-  }
-  // 4. Mystery / Prophecy / Occult / Ancient Ritual
-  if (/\b(prophecy|oracle|ritual|ancient|curse|shadows?|spells?|incantation|omen|cryptic|destiny)\b/i.test(textContext)) {
-    return findMoodByTag('oracular') || findMoodByTag('incantatory') || findMoodByTag('eerie') || EXHAUSTIVE_MOODS[0];
-  }
-  // 5. Conspiratorial / Whisper / Secret / Heist
-  if (/\b(secret|whisper|conspiracy|don't tell|quietly|hush|behind their backs|plot|undercover)\b/i.test(textContext)) {
-    return findMoodByTag('conspiratorial') || EXHAUSTIVE_MOODS[0];
-  }
-  // 6. Intimate / Sultry / Flirtatious / Deep Affection
-  if (/\b(sultry|flirt|kiss|attracted|beautiful|alluring|intimate|come closer|darling|romance|beloved)\b/i.test(textContext)) {
-    return findMoodByTag('sultry') || findMoodByTag('flirtatious') || findMoodByTag('affectionate') || EXHAUSTIVE_MOODS[0];
-  }
-  // 7. Triumph / Victory / Celebration
-  if (/\b(we won|victory|champion|triumph|we did it|celebrate|hooray|hurrah|proud of you|congratulations)\b/i.test(textContext)) {
-    return findMoodByTag('triumphant') || findMoodByTag('proud') || findMoodByTag('ecstatic') || EXHAUSTIVE_MOODS[0];
-  }
-  // 8. Kinetic / Laban / Combat / Attack
-  if (/\b(punch|strike|slash|attack|fight|impact|blow|crush|battle|charge|stab)\b/i.test(textContext)) {
-    return findMoodByTag('punch') || findMoodByTag('slash') || findMoodByTag('determined') || EXHAUSTIVE_MOODS[0];
-  }
-  // 9. Playful Banter / Jokes / Teasing
-  if (/\b(haha|lol|kidding|joke|teasing|silly|prank|play pretend|banter|game|chuckle)\b/i.test(textContext)) {
-    return findMoodByTag('playful') || findMoodByTag('mischievous') || findMoodByTag('amused') || EXHAUSTIVE_MOODS[0];
-  }
-  // 10. Tender Care / Soothing Comfort
-  if (/\b(it's okay|comfort|soothe|calm down|safe here|breathe with me|gentle|healing|peace)\b/i.test(textContext)) {
-    return findMoodByTag('soothing') || findMoodByTag('compassionate') || findMoodByTag('reassuring') || EXHAUSTIVE_MOODS[0];
-  }
-  // 11. Sarcastic / Mocking / Snarky
-  if (/\b(oh really|yeah right|whatever|brilliant|obviously|slow clap|eyeroll|as if|mocking)\b/i.test(textContext)) {
-    return findMoodByTag('sarcastic') || findMoodByTag('wry') || findMoodByTag('mocking') || EXHAUSTIVE_MOODS[0];
-  }
-  // 12. Weary / Exhausted / Resigned
-  if (/\b(tired|exhausted|burnout|can't go on|heavy|giving up|resigned|sigh|weary)\b/i.test(textContext)) {
-    return findMoodByTag('weary') || findMoodByTag('resigned') || findMoodByTag('stoic') || EXHAUSTIVE_MOODS[0];
-  }
-  // 13. Urgent / Crisis / Emergency
-  if (/\b(hurry|urgent|emergency|fast|quick|no time|immediate|danger|alarm|act now)\b/i.test(textContext)) {
-    return findMoodByTag('urgent') || findMoodByTag('breathless') || EXHAUSTIVE_MOODS[0];
-  }
-  // 14. Storytelling / Folklore / Immersive Tales
-  if (/\b(tell me a story|once upon a time|chronicle|legend|myth|folktale|lore|narrate)\b/i.test(textContext)) {
-    return findMoodByTag('storyteller') || findMoodByTag('entranced') || EXHAUSTIVE_MOODS[0];
-  }
-  // 15. Wonder / Awe / Cosmic Discovery
-  if (/\b(wonder|universe|cosmos|stars|awe|breathtaking|incredible|how is it possible|infinite)\b/i.test(textContext)) {
-    return findMoodByTag('entranced') || findMoodByTag('reverent') || findMoodByTag('reflective') || EXHAUSTIVE_MOODS[0];
-  }
-  // 16. Melancholy / Nostalgic / Bittersweet
-  if (/\b(miss those days|remember when|bittersweet|nostalgia|yearning|long ago|memory)\b/i.test(textContext)) {
-    return findMoodByTag('wistful') || findMoodByTag('bittersweet') || findMoodByTag('melancholy') || EXHAUSTIVE_MOODS[0];
-  }
-  // 17. Gratitude / Warm Thanks
-  if (/\b(thank you|so grateful|appreciate you|means a lot|blessed|thankful)\b/i.test(textContext)) {
-    return findMoodByTag('grateful') || findMoodByTag('affectionate') || EXHAUSTIVE_MOODS[0];
-  }
-  // 18. Command / Stately / Imperious
-  if (/\b(attention|listen to my command|orders|standing orders|ruler|queen|emperor|obey)\b/i.test(textContext)) {
-    return findMoodByTag('commanding') || findMoodByTag('imperious') || findMoodByTag('solemn') || EXHAUSTIVE_MOODS[0];
+  const candidates: Array<{ mood: MoodOption; score: number }> = [];
+  const addCandidate = (tags: string[], score: number) => {
+    for (const tag of tags) {
+      const m = findMoodByTag(tag);
+      if (m) candidates.push({ mood: m, score });
+    }
+  };
+
+  if (/\b(panic|terrified|nightmare|horror|dread|scared to death|monsters?|running for my life|shaking)\b/i.test(textContext)) addCandidate(['terrified', 'dread'], 1.2);
+  if (/\b(mourn|grief|died|crying|tears|sob|lost everything|funeral|devastated|heartbroken)\b/i.test(textContext)) addCandidate(['grieving', 'tearful', 'lament'], 1.2);
+  if (/\b(furious|rage|betrayed|how dare you|liar|hate you|screaming|unforgivable|traitor)\b/i.test(textContext)) addCandidate(['furious', 'defiant', 'indignant'], 1.2);
+  if (/\b(prophecy|oracle|ritual|ancient|curse|shadows?|spells?|incantation|omen|cryptic|destiny)\b/i.test(textContext)) addCandidate(['oracular', 'incantatory', 'eerie'], 1.0);
+  if (/\b(secret|whisper|conspiracy|don't tell|quietly|hush|behind their backs|plot|undercover)\b/i.test(textContext)) addCandidate(['conspiratorial'], 1.0);
+  if (/\b(sultry|flirt|kiss|attracted|beautiful|alluring|intimate|come closer|darling|romance|beloved)\b/i.test(textContext)) addCandidate(['sultry', 'flirtatious', 'affectionate'], 1.0);
+  if (/\b(we won|victory|champion|triumph|we did it|celebrate|hooray|hurrah|proud of you|congratulations)\b/i.test(textContext)) addCandidate(['triumphant', 'proud', 'ecstatic'], 1.0);
+  if (/\b(punch|strike|slash|attack|fight|impact|blow|crush|battle|charge|stab)\b/i.test(textContext)) addCandidate(['punch', 'slash', 'determined'], 1.0);
+  if (/\b(haha|lol|kidding|joke|teasing|silly|prank|play pretend|banter|game|chuckle)\b/i.test(textContext)) addCandidate(['playful', 'mischievous', 'amused'], 1.0);
+  if (/\b(it's okay|comfort|soothe|calm down|safe here|breathe with me|gentle|healing|peace)\b/i.test(textContext)) addCandidate(['soothing', 'compassionate', 'reassuring'], 1.0);
+  if (/\b(oh really|yeah right|whatever|brilliant|obviously|slow clap|eyeroll|as if|mocking)\b/i.test(textContext)) addCandidate(['sarcastic', 'wry', 'mocking'], 1.0);
+  if (/\b(tired|exhausted|burnout|can't go on|heavy|giving up|resigned|sigh|weary)\b/i.test(textContext)) addCandidate(['weary', 'resigned', 'stoic'], 1.0);
+  if (/\b(hurry|urgent|emergency|fast|quick|no time|immediate|danger|alarm|act now)\b/i.test(textContext)) addCandidate(['urgent', 'breathless'], 1.1);
+  if (/\b(tell me a story|once upon a time|chronicle|legend|myth|folktale|lore|narrate)\b/i.test(textContext)) addCandidate(['storyteller', 'entranced'], 1.0);
+  if (/\b(wonder|universe|cosmos|stars|awe|breathtaking|incredible|how is it possible|infinite)\b/i.test(textContext)) addCandidate(['entranced', 'reverent', 'reflective'], 1.0);
+  if (/\b(miss those days|remember when|bittersweet|nostalgia|yearning|long ago|memory)\b/i.test(textContext)) addCandidate(['wistful', 'bittersweet', 'melancholy'], 1.0);
+  if (/\b(thank you|so grateful|appreciate you|means a lot|blessed|thankful)\b/i.test(textContext)) addCandidate(['grateful', 'affectionate'], 1.0);
+  if (/\b(attention|listen to my command|orders|standing orders|ruler|queen|emperor|obey)\b/i.test(textContext)) addCandidate(['commanding', 'imperious', 'solemn'], 1.1);
+
+  if (message.endsWith('?')) addCandidate(['reflective', 'bewildered'], 0.8);
+  if (message.includes('!')) addCandidate(['joyful', 'ecstatic'], 0.8);
+
+  candidates.push({ mood: findMoodByTag('earnest') || EXHAUSTIVE_MOODS[0], score: 0.5 });
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+
+  let selectedMood = currentMood || best.mood;
+  let intensity = 0.6;
+
+  if (currentMood && currentMood.id !== best.mood.id) {
+    const currentScore = candidates.find(c => c.mood.id === currentMood.id)?.score || 0.4;
+    if (best.score - currentScore > 0.25) {
+      selectedMood = best.mood;
+      intensity = Math.min(1.0, 0.6 + (best.score - currentScore));
+    } else {
+      selectedMood = currentMood;
+      intensity = 0.5 + (0.6 - 0.5) * 0.85;
+    }
+  } else {
+    intensity = Math.min(1.0, 0.5 + best.score * 0.2);
   }
 
-  // Conversational punctuation & structure heuristics
-  if (message.endsWith('?')) {
-    return findMoodByTag('reflective') || findMoodByTag('bewildered') || EXHAUSTIVE_MOODS[0];
-  }
-  if (message.includes('!')) {
-    return findMoodByTag('joyful') || findMoodByTag('ecstatic') || EXHAUSTIVE_MOODS[0];
-  }
-
-  return findMoodByTag('earnest') || findMoodByTag('soothing') || EXHAUSTIVE_MOODS[0];
+  return { mood: selectedMood, intensity };
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -150,7 +119,8 @@ app.post('/api/chat', async (req, res) => {
     const effectiveMode = isRoleplayInvite ? 'on-stage' : clientMode;
 
     // Automatically select relevant mood tag from the 100-mood library based on conversation context
-    const autoMood = resolveAutomaticContextualMood(message, history, mood);
+    const resolvedAuto = resolveAutomaticContextualMood(message, history, mood, parsedProsody.mood);
+    const autoMood = resolvedAuto.mood;
 
     const autoMoodInstruction = `[AUTOMATIC CONTEXTUAL PROSODY:
 Active Prosody Tag: ${autoMood.tag} (${autoMood.label})
@@ -235,11 +205,13 @@ Ensure your vocal cadence, pitch inflection, and rhythm embody these characteris
 
     const parsedProsody = extractContextualProsody(reply);
     const finalMood = parsedProsody.mood || autoMood;
+    const voxLine = parseVoxLine(reply, finalMood);
 
     res.json({ 
       reply: reply || "I'm listening...", 
       detectedMode: effectiveMode,
-      mood: finalMood
+      mood: finalMood,
+      voxLine
     });
   } catch (err: any) {
     console.error('Chat API Error:', err);
@@ -262,22 +234,52 @@ app.post('/api/tts', async (req, res) => {
       return res.status(400).json({ error: 'Text is required for TTS' });
     }
 
-    // Extract any contextual prosody tag from text and strip every [tag] anywhere in text
-    let effectiveMood = mood;
-    const firstTagMatch = text.match(/\[([a-zA-Z\-_]+)(?::[0-9.]+)?(?:\s*[^\]]*)?\]/);
-    if (firstTagMatch && !effectiveMood) {
-      const detectedTag = firstTagMatch[1].toLowerCase();
-      effectiveMood = findMoodByTag(detectedTag) || {
-        tag: `[${detectedTag}]`,
-        description: `Contextual ${detectedTag} dynamic vocal prosody`,
-      };
-    }
-    // Strip every [tag] anywhere in the text so later tags are not read aloud
-    const cleanText = text.replace(/\[[^\]]+\]/g, '').replace(/\s{2,}/g, ' ').trim();
-
+    const defaultMood = mood || findMoodByTag('joyful') || EXHAUSTIVE_MOODS[0];
+    const voxLine = parseVoxLine(text, defaultMood);
     const baseVoice = voiceProfile?.baseVoice || 'Kore';
-    const moodPrefix = effectiveMood?.tag ? `Spoken with ${effectiveMood.tag} emotional prosody (${effectiveMood.description || ''}). ` : '';
-    const stylePrompt = `${moodPrefix}${voiceProfile?.vocalStyle || 'Warm, authentic, natural conversational female voice'}`;
+    const baseVocalStyle = voiceProfile?.vocalStyle || 'Warm, authentic, natural conversational female voice';
+
+    // Render A: Build multi-part content with speechMetadata.style per segment
+    const parts: Array<{ text: string; speechMetadata: { style: string } }> = [];
+    let prevMoodTag = '';
+
+    for (let i = 0; i < voxLine.segments.length; i++) {
+      const seg = voxLine.segments[i];
+      const moodObj = EXHAUSTIVE_MOODS.find(m => m.id === seg.mood) || defaultMood;
+      
+      let intensityModifier = '';
+      if (seg.intensity < 0.4) intensityModifier = 'a hint of ';
+      else if (seg.intensity > 0.75) intensityModifier = 'intensely ';
+
+      const toneDesc = moodObj.tone || moodObj.description || seg.mood;
+      let segmentStyle = `${intensityModifier}${toneDesc}`;
+
+      if (seg.enter.kind === 'ramp' && prevMoodTag) {
+        segmentStyle = `${prevMoodTag}, then ${segmentStyle}`;
+      }
+
+      prevMoodTag = moodObj.tag || seg.mood;
+
+      let segText = seg.text;
+      if (seg.enter.kind === 'beat') {
+        const pauseTag = seg.enter.ms > 350 ? '<long pause>' : '<short pause>';
+        segText = `${pauseTag} ${segText}`;
+      }
+
+      // Adaptive Silence & Breathing Control based on pace.pause tier
+      if (seg.pace.pause === 'long') {
+        segText = segText.replace(/([.!?])\s+/g, '$1 <long pause> ').replace(/,\s+/g, ', <short pause> ');
+      } else if (seg.pace.pause === 'marked' || seg.pace.pause === 'short') {
+        segText = segText.replace(/([.!?])\s+/g, '$1 <short pause> ');
+      }
+
+      parts.push({
+        text: segText,
+        speechMetadata: {
+          style: `${segmentStyle}. ${baseVocalStyle}`
+        }
+      });
+    }
 
     const ttsModels = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
     let response: any = null;
@@ -291,14 +293,7 @@ app.post('/api/tts', async (req, res) => {
           contents: [
             {
               role: 'user',
-              parts: [
-                {
-                  text: cleanText,
-                  speechMetadata: {
-                    style: stylePrompt,
-                  },
-                },
-              ],
+              parts,
             },
           ],
           config: {

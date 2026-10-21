@@ -25,7 +25,8 @@ import {
   deleteMood, 
   MOOD_CATEGORIES,
   isContextualProsodyEnabled,
-  setContextualProsodyEnabled
+  setContextualProsodyEnabled,
+  generateTone
 } from '../services/moodStore';
 import { speakWithVoiceProfile, stopCurrentAudio, getSavedVoiceProfiles } from '../services/voiceCloneService';
 
@@ -58,6 +59,12 @@ export const MoodManager: React.FC = () => {
       tag: tagFormatted,
       category: (editingMood.category as any) || 'Custom',
       description: editingMood.description || 'Custom crafted prosody inflection',
+      tone: generateTone(editingMood.description || ''),
+      pace: {
+        rate: editingMood.rateMod ?? 1.0,
+        pause: 'normal',
+        articulation: 'neutral'
+      },
       pitchMod: editingMood.pitchMod ?? 1.0,
       rateMod: editingMood.rateMod ?? 1.0,
       volumeMod: editingMood.volumeMod ?? 1.0,
