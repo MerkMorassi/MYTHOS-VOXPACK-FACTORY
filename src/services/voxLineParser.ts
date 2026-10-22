@@ -1,5 +1,6 @@
 import { MoodOption, findMoodByTag, EXHAUSTIVE_MOODS } from './moodStore';
 import { Pace, PauseTier, Articulation } from '../types';
+import { ECHOS_VOICE_TAGS, ECHOS_ALIASES } from './echos/echosEngine';
 
 export interface VoxSegment {
   text: string;
@@ -9,6 +10,12 @@ export interface VoxSegment {
   enter: {
     kind: 'none' | 'blend' | 'ramp' | 'beat' | 'cut';
     ms: number;
+  };
+  echosSound?: {
+    tag: string;
+    lvl: number;
+    under?: boolean;
+    offsetMs?: number;
   };
 }
 
@@ -60,11 +67,13 @@ export function parseVoxLine(raw: string, defaultMood: MoodOption, speaker = 'LI
     intensity: number;
     paceOverride?: Partial<Pace>;
     enterExplicit?: { kind: 'none' | 'blend' | 'ramp' | 'beat' | 'cut'; ms: number };
+    echosSound?: { tag: string; lvl: number; under?: boolean; offsetMs?: number };
   }> = [];
 
   let currentMood = defaultMood;
   let currentIntensity = 0.6;
   let currentPaceOverride: Partial<Pace> | undefined = undefined;
+  let pendingEchosSound: { tag: string; lvl: number; under?: boolean; offsetMs?: number } | undefined = undefined;
   
   let match: RegExpExecArray | null;
 
@@ -141,7 +150,25 @@ export function parseVoxLine(raw: string, defaultMood: MoodOption, speaker = 'LI
           }
         }
       } else {
-        console.warn(`[VoxLineParser] Unknown tag dropped: [${directive}]`);
+        const cleanTag = tagPart.toLowerCase();
+        const alias = ECHOS_ALIASES[cleanTag];
+        const isVoiceTag = ECHOS_VOICE_TAGS.includes(cleanTag as any);
+        if (isVoiceTag || alias) {
+          const effectiveTag = alias ? alias.tag : cleanTag;
+          const effectiveLvl = intensityPart ? parseInt(intensityPart, 10) : (alias ? alias.lvl : 2);
+          const moodTarget = alias ? alias.mood : (effectiveTag === 'sigh' ? 'disappointed' : effectiveTag === 'laugh' ? 'playful' : effectiveTag === 'gasp' ? 'surprised' : 'intimate');
+          const matchedMood = findMoodByTag(moodTarget);
+          if (matchedMood) {
+            currentMood = matchedMood;
+          }
+          pendingEchosSound = {
+            tag: effectiveTag,
+            lvl: Math.max(1, Math.min(3, isNaN(effectiveLvl) ? 2 : effectiveLvl)),
+            under: directive.includes('under'),
+          };
+        } else {
+          console.warn(`[VoxLineParser] Unknown tag dropped: [${directive}]`);
+        }
       }
     }
 
@@ -150,8 +177,10 @@ export function parseVoxLine(raw: string, defaultMood: MoodOption, speaker = 'LI
         text: chunkText,
         mood: currentMood,
         intensity: currentIntensity,
-        paceOverride: currentPaceOverride
+        paceOverride: currentPaceOverride,
+        echosSound: pendingEchosSound
       });
+      pendingEchosSound = undefined;
     }
   }
 
@@ -207,6 +236,7 @@ export function parseVoxLine(raw: string, defaultMood: MoodOption, speaker = 'LI
         articulation: finalArticulation,
       },
       enter,
+      ...(seg.echosSound ? { echosSound: seg.echosSound } : {})
     };
   }).filter(s => s.text.length > 0);
 

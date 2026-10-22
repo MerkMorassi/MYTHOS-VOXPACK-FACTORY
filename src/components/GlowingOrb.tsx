@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Mic, MicOff, Volume2, Sparkles, Palette, PhoneOff } from 'lucide-react';
+import { echos, EchosState } from '../services/echos';
 
 export type OrbTheme = 'spectral' | 'neon' | 'minimal' | 'solaris';
 
@@ -32,6 +33,23 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
   onEndVoiceSession,
   selectedMood,
 }) => {
+  const [echosState, setEchosState] = useState<EchosState>(() => echos.state);
+  const [activeSfxTag, setActiveSfxTag] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubState = echos.onState(s => setEchosState({ ...s }));
+    const unsubEvent = echos.onEvent(e => {
+      if (e.ev === 'sfx') {
+        setActiveSfxTag(e.tag);
+        const timer = setTimeout(() => setActiveSfxTag(null), 900);
+        return () => clearTimeout(timer);
+      }
+    });
+    return () => {
+      unsubState();
+      unsubEvent();
+    };
+  }, []);
   const getThemeStyles = () => {
     switch (orbTheme) {
       case 'neon':
@@ -81,8 +99,11 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
 
   return (
     <div className="flex flex-col items-center justify-center py-8 px-4 relative">
-      {/* Ambient background glow */}
-      <div className="absolute w-72 h-72 rounded-full bg-violet-600/10 blur-3xl pointer-events-none animate-pulse"></div>
+      {/* Ambient background glow synchronized with ECHOS mood hue */}
+      <div 
+        className="absolute w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-700 animate-pulse"
+        style={{ backgroundColor: `hsl(${echosState.hue}, 70%, 55%, 0.16)` }}
+      />
 
       {/* Theme Selector Menu */}
       <div className="absolute top-2 right-4 flex items-center gap-1.5 bg-slate-900/80 border border-slate-800 rounded-xl px-3 py-1.5 backdrop-blur-md z-20">
@@ -176,6 +197,15 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
             </>
           )}
         </div>
+
+        {activeSfxTag && (
+          <div className="pt-1 flex justify-center">
+            <span className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-[11px] font-mono font-bold bg-violet-950/90 border border-violet-500/60 text-violet-200 shadow-lg shadow-violet-900/30 animate-pulse">
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              *{activeSfxTag}*
+            </span>
+          </div>
+        )}
 
         {currentText && (
           <motion.div

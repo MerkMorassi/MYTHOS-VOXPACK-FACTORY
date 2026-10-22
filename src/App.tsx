@@ -22,12 +22,14 @@ import { runLoreExtractionWorker } from './services/loreExtractionWorker';
 import { MoodOption, getSavedMoodId, saveMoodId, getMoodById, extractContextualProsody } from './services/moodStore';
 import { getApiAuthHeaders } from './services/apiKeyStore';
 import { SettingsModal } from './components/SettingsModal';
+import { echos, identifyAndStripParalinguisticTags, stripParalinguisticTags, splitLineChunks } from './services/echos';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
   const [activeMode, setActiveMode] = useState<'off-stage' | 'on-stage'>('off-stage');
   const [activePersona, setActivePersona] = useState<Persona>(() => getActivePersona());
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [conversationMomentum, setConversationMomentum] = useState<number>(1.0);
   
   const [orbTheme, setOrbTheme] = useState<OrbTheme>(() => {
     return (localStorage.getItem('lila_orb_theme') as OrbTheme) || localStorage.getItem('maya_orb_theme') || 'spectral';
@@ -243,6 +245,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
           setIsListening(false);
           const textToSend = latestTranscriptRef.current.trim();
           if (textToSend) {
+            echos.play('floor_ack');
             latestTranscriptRef.current = '';
             handleSendMessageRef.current(textToSend, 'voice');
           } else if (isVoiceSessionActiveRef.current && orbStateRef.current === 'listening') {
@@ -287,6 +290,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
   const handleToggleListening = () => {
     // If speaking, tapping orb interrupts immediately
     if (orbState === 'speaking') {
+      echos.play('floor_want');
       stopCurrentAudio();
       setOrbVolume(0);
       setIsVoiceSessionActive(true);
@@ -297,6 +301,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
 
     // If session is not active, activate live voice session and start listening
     if (!isVoiceSessionActive) {
+      echos.play('floor_want');
       setIsVoiceSessionActive(true);
       isVoiceSessionActiveRef.current = true;
 
@@ -346,12 +351,46 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
     handleSendMessageRef.current = handleSendMessage;
 
     // Hard stop any previous audio
-    stopCurrentAudio();
+    // Automatically detect long silences and speech pauses in the user's input and trim them
+    const rawCleanText = text
+      .replace(/(\.{3,}|\s*\[(?:pause|silence|breath)\]\s*)/gi, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+
+    // Identify and strip paralinguistic tags like [sigh] or [hum] from user dialogue
+    const { cleanDialogue: cleanInputText, identifiedTags: userInputTags } = identifyAndStripParalinguisticTags(rawCleanText);
+    if (userInputTags.length > 0) {
+      userInputTags.forEach(sound => {
+        echos.setState({ lastTag: sound.tag, level: sound.lvl });
+      });
+    }
+
+    // Compute conversational momentum based on message length, sentiment, and energetic markers
+    const words = cleanInputText.split(/\s+/).filter(Boolean);
+    const wordCount = words.length;
+    const exclamationCount = (cleanInputText.match(/!/g) || []).length;
+    const questionCount = (cleanInputText.match(/\?/g) || []).length;
+
+    const lower = cleanInputText.toLowerCase();
+    const highEnergyRegex = /\b(fast|rapid|quick|hurry|run|now|immediately|furious|excited|panic|terrified|amazing|awesome|love|hate|punch|strike|screaming)\b/i;
+    const calmRegex = /\b(calm|peace|quiet|soft|whisper|tired|sleepy|rest|slow|relax|gentle|sigh|steady)\b/i;
+
+    let delta = 0;
+    if (highEnergyRegex.test(lower)) delta += 0.25;
+    if (calmRegex.test(lower)) delta -= 0.25;
+    delta += Math.min(0.3, exclamationCount * 0.15);
+    delta += Math.min(0.1, questionCount * 0.05);
+    if (wordCount > 20) delta += 0.15;
+    else if (wordCount < 4) delta -= 0.1;
+
+    const targetScore = Math.max(0.5, Math.min(2.0, 1.0 + delta));
+    const updatedMomentum = Number((conversationMomentum * 0.65 + targetScore * 0.35).toFixed(2));
+    setConversationMomentum(updatedMomentum);
 
     const userMsg: Message = {
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
       role: 'user',
-      content: text,
+      content: cleanInputText || text,
       mode: activeMode,
       timestamp: Date.now()
     };
@@ -366,6 +405,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       setIsVoiceSessionActive(true);
       isVoiceSessionActiveRef.current = true;
     } else {
+      echos.play('floor_ack');
       setIsVoiceSessionActive(false);
       isVoiceSessionActiveRef.current = false;
       try {
@@ -373,25 +413,30 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       } catch (_) {}
     }
 
-    const loreSnippets = searchLore(text, 3);
+    const loreSnippets = searchLore(cleanInputText || text, 3);
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
         body: JSON.stringify({
-          message: text,
+          message: cleanInputText || text,
           mode: activeMode,
           customInstructions,
           history: messages,
           voiceProfile: selectedVoice,
           loreSnippets,
           mood: selectedMood,
+          momentum: updatedMomentum,
         })
       });
 
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+
+      if (typeof data.momentum === 'number') {
+        setConversationMomentum(data.momentum);
+      }
 
       const replyContent = data.reply;
       const detectedMode = data.detectedMode || activeMode;
@@ -411,6 +456,14 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       const activeMoodTag = parsedProsody.detectedTag || detectedMood?.tag || selectedMood?.tag;
       const activeMoodLabel = parsedProsody.mood?.label || detectedMood?.label || selectedMood?.label;
 
+      // Identify and strip paralinguistic tags like [sigh] or [hum] from dialogue, routing to ECHOS engine
+      const { cleanDialogue: cleanSpokenReply, identifiedTags: assistantSoundChunks } = identifyAndStripParalinguisticTags(replyContent);
+      if (assistantSoundChunks.length > 0) {
+        assistantSoundChunks.forEach(chunk => {
+          echos.setState({ lastTag: chunk.tag, level: chunk.lvl });
+        });
+      }
+
       const assistantMsg: Message = {
         id: 'msg_' + (Date.now() + 1) + '_' + Math.random().toString(36).substring(2, 7),
         role: 'assistant',
@@ -424,7 +477,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
 
       const finalMessages = [...newMessages, assistantMsg];
       setMessages(finalMessages);
-      setCurrentSpokenText(replyContent);
+      setCurrentSpokenText(cleanSpokenReply || replyContent);
       setOrbState('speaking');
 
       // Persist to current conversation session in localStorage
@@ -454,6 +507,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
 
         // CONTINUOUS TURN-TAKING: ONLY if initiated via push-to-talk voice mode!
         if (isVoiceSessionActiveRef.current) {
+          echos.play('floor_yield');
           setTimeout(() => {
             if (isVoiceSessionActiveRef.current) {
               startListening();
@@ -464,7 +518,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         } else {
           setOrbState('idle');
         }
-      }, selectedMood);
+      }, selectedMood, updatedMomentum);
 
       // Animate orb volume smoothly in sync with vocal delivery
       const animateOrb = () => {
@@ -495,7 +549,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       setOrbState('idle');
       
       if (isQuotaError) {
-        speakWithVoiceProfile(errorMsg.content, selectedVoice);
+        speakWithVoiceProfile(errorMsg.content, selectedVoice, undefined, selectedMood, conversationMomentum);
       }
     } finally {
       setIsLoading(false);
@@ -516,6 +570,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         setActiveMode={setActiveMode}
         activePersona={activePersona}
         selectedMood={selectedMood}
+        conversationMomentum={conversationMomentum}
         onOpenSettings={() => setIsSettingsOpen(true)}
       />
 

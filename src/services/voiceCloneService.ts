@@ -55,6 +55,8 @@ export interface CloningProgress {
 
 import { MoodOption, extractContextualProsody } from './moodStore';
 import { getApiAuthHeaders } from './apiKeyStore';
+import { injectMicroSilences } from './audioProcessor';
+import { echos, prepareMessageForTTS, stripParalinguisticTags } from './echos';
 
 let activeAudioElement: HTMLAudioElement | null = null;
 let isNeuralQuotaExhausted = false;
@@ -328,11 +330,22 @@ export async function speakWithVoiceProfile(
   text: string, 
   profile: VoiceProfile, 
   onEnd?: () => void,
-  mood?: MoodOption
+  mood?: MoodOption,
+  momentum?: number
 ) {
   // Extract contextual prosody if present (e.g., "[joyful] Good morning!")
   const { cleanText, mood: detectedMood } = extractContextualProsody(text);
   const effectiveMood = mood || detectedMood;
+
+  // Plan ECHOS nonverbal acoustic events and extract clean spoken words
+  const echosPlan = echos.plan(cleanText);
+  // Prepare message for TTS: strip any non-verbal vocalization tags ([sigh], [hum], etc.) and route them
+  const { cleanTextForTTS: textForTts } = prepareMessageForTTS(echosPlan.spoken || cleanText);
+
+  // Sync ECHOS mood if plan indicates an emotion
+  if (echosPlan.mood) {
+    echos.setState({ mood: echosPlan.mood });
+  }
 
   // Increment session token to invalidate any previous or race audio calls
   const thisSessionId = ++currentPlaybackSessionId;
@@ -354,9 +367,10 @@ export async function speakWithVoiceProfile(
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
         body: JSON.stringify({
-          text: cleanText,
+          text: textForTts,
           voiceProfile: profile,
           mood: effectiveMood,
+          momentum,
         }),
       });
 
@@ -371,9 +385,23 @@ export async function speakWithVoiceProfile(
           isNeuralQuotaExhausted = true;
           console.info('Neural voice quota reached, switching seamlessly to browser speech synthesis.');
         } else if (data.audio && typeof data.audio === 'string' && data.audio.length > 50) {
-          const audioSrc = `data:audio/wav;base64,${data.audio}`;
+          // Prepend synthetic micro-silences for natural human inhalation before playback starts
+          const paceToUse = effectiveMood?.pace || { rate: 1.0, pause: 'normal', articulation: 'neutral' };
+          const processedAudio = injectMicroSilences(data.audio, paceToUse);
+          const audioSrc = `data:audio/wav;base64,${processedAudio}`;
           const audio = new Audio(audioSrc);
           activeAudioElement = audio;
+
+          // Trigger ECHOS paralinguistic sound takes on timeline
+          if (echosPlan.items.length > 0) {
+            echosPlan.items.forEach(item => {
+              setTimeout(() => {
+                if (currentPlaybackSessionId === thisSessionId) {
+                  echos.play(item.tag, item.lvl, { cents: item.cents, db: item.db });
+                }
+              }, Math.max(0, item.offsetMs));
+            });
+          }
 
           audio.onended = () => {
             if (activeAudioElement === audio) {
@@ -388,7 +416,7 @@ export async function speakWithVoiceProfile(
             }
             // Only fallback if this session is still the active one
             if (currentPlaybackSessionId === thisSessionId) {
-              fallbackSpeechSynthesis(text, profile, safeEnd, thisSessionId, mood);
+              fallbackSpeechSynthesis(text, profile, safeEnd, thisSessionId, mood, momentum);
             }
           };
 
@@ -412,7 +440,7 @@ export async function speakWithVoiceProfile(
 
   // 2. Browser SpeechSynthesis (free, unlimited, instant, 0 quota)
   if (currentPlaybackSessionId === thisSessionId) {
-    fallbackSpeechSynthesis(text, profile, safeEnd, thisSessionId, mood);
+    fallbackSpeechSynthesis(text, profile, safeEnd, thisSessionId, mood, momentum);
   }
 }
 
@@ -421,7 +449,8 @@ function fallbackSpeechSynthesis(
   profile: VoiceProfile, 
   onEnd: () => void,
   sessionId: number,
-  mood?: MoodOption
+  mood?: MoodOption,
+  momentum?: number
 ) {
   if (currentPlaybackSessionId !== sessionId) return;
 
@@ -433,10 +462,12 @@ function fallbackSpeechSynthesis(
   // Extract contextual prosody if present and strip tag from utterance
   const { cleanText, mood: detectedMood } = extractContextualProsody(text);
   const effectiveMood = mood || detectedMood;
+  // Ensure non-verbal vocalization tags ([sigh], [hum], etc.) are stripped for clean TTS
+  const cleanDialogueForTTS = stripParalinguisticTags(cleanText);
 
   try {
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(cleanText);
+    const utterance = new SpeechSynthesisUtterance(cleanDialogueForTTS);
     
     // Modulate pitch and tempo with selected emotional mood
     const basePitch = profile.pitch || 1.0;
@@ -450,8 +481,9 @@ function fallbackSpeechSynthesis(
     const loudnessPitchMultiplier = 1.0 + loudnessExcess * 0.4;
     const loudnessRateMultiplier = 1.0 + loudnessExcess * 0.25;
 
+    const momentumRate = typeof momentum === 'number' ? Math.max(0.7, Math.min(1.4, momentum)) : 1.0;
     utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch * pitchMod * loudnessPitchMultiplier));
-    utterance.rate = Math.max(0.6, Math.min(1.5, baseRate * rateMod * loudnessRateMultiplier));
+    utterance.rate = Math.max(0.6, Math.min(1.8, baseRate * rateMod * loudnessRateMultiplier * momentumRate));
     utterance.volume = Math.max(0.0, Math.min(1.0, rawVolume));
 
     const voices = window.speechSynthesis.getVoices();

@@ -2,6 +2,7 @@ import React from 'react';
 import { Mic, Sparkles, MessageSquare, BookOpen, BrainCircuit, Settings } from 'lucide-react';
 import { Persona } from '../services/personaStore';
 import { hasStoredApiKey } from '../services/apiKeyStore';
+import { MomentumGauge } from './MomentumGauge';
 
 interface HeaderProps {
   activeTab: 'companion' | 'studio' | 'lore' | 'personas' | 'moods';
@@ -11,6 +12,7 @@ interface HeaderProps {
   activePersona?: Persona;
   selectedMood?: { id: string; label: string; tag: string };
   onOpenSettings?: () => void;
+  conversationMomentum?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({ 
@@ -21,6 +23,7 @@ export const Header: React.FC<HeaderProps> = ({
   activePersona,
   selectedMood,
   onOpenSettings,
+  conversationMomentum = 1.0,
 }) => {
   const personaName = activePersona?.name || 'LILA';
 
@@ -105,6 +108,9 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </button>
         )}
+
+        {/* Live Conversation Intensity & Momentum Visualizer */}
+        <MomentumGauge momentum={conversationMomentum} className="hidden md:flex" />
 
         <button
           onClick={() => setActiveMode(activeMode === 'off-stage' ? 'on-stage' : 'off-stage')}
