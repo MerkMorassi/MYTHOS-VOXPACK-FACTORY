@@ -23,6 +23,7 @@ import { MoodOption, getSavedMoodId, saveMoodId, getMoodById, extractContextualP
 import { getApiAuthHeaders } from './services/apiKeyStore';
 import { SettingsModal } from './components/SettingsModal';
 import { echos, identifyAndStripParalinguisticTags, stripParalinguisticTags, splitLineChunks } from './services/echos';
+import { voicePreBuffer } from './services/voicePreBufferService';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
@@ -138,6 +139,21 @@ Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
     localStorage.setItem('lila_orb_theme', theme);
   };
 
+  // Sync voice session state to ECHOS for idle breath timing
+  useEffect(() => {
+    echos.setState({ 
+      sessionActive: isVoiceSessionActive,
+      speaking: orbState === 'speaking'
+    });
+
+    // WARM UP MIC: Start pre-buffering as soon as voice session is active
+    if (isVoiceSessionActive) {
+      voicePreBuffer.start().catch(err => console.warn('Pre-buffer start failed:', err));
+    } else {
+      voicePreBuffer.stop();
+    }
+  }, [isVoiceSessionActive, orbState]);
+
   const handleSelectSession = (id: string) => {
     stopCurrentAudio();
     const target = sessions.find(s => s.id === id);
@@ -216,7 +232,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       } catch (err) {
         console.warn('Recognition start retry:', err);
       }
-    }, 150);
+    }, 50);
   };
 
   useEffect(() => {

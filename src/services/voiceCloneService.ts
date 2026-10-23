@@ -59,7 +59,35 @@ import { injectMicroSilences } from './audioProcessor';
 import { echos, prepareMessageForTTS, stripParalinguisticTags } from './echos';
 
 let activeAudioElement: HTMLAudioElement | null = null;
-let isNeuralQuotaExhausted = false;
+let isNeuralQuotaExhausted = (() => {
+  if (typeof localStorage === 'undefined') return false;
+  const stored = localStorage.getItem('lila_neural_quota_exhausted');
+  if (stored === 'true') {
+    const timestamp = Number(localStorage.getItem('lila_neural_quota_timestamp') || 0);
+    // Recover after 2 hours (Gemini free tier reset window is often 2h-24h, 2h is a safe aggressive retry)
+    if (Date.now() - timestamp > 2 * 60 * 60 * 1000) {
+      localStorage.removeItem('lila_neural_quota_exhausted');
+      localStorage.removeItem('lila_neural_quota_timestamp');
+      return false;
+    }
+    return true;
+  }
+  return false;
+})();
+
+function setNeuralQuotaExhausted(value: boolean) {
+  isNeuralQuotaExhausted = value;
+  if (typeof localStorage !== 'undefined') {
+    if (value) {
+      localStorage.setItem('lila_neural_quota_exhausted', 'true');
+      localStorage.setItem('lila_neural_quota_timestamp', Date.now().toString());
+    } else {
+      localStorage.removeItem('lila_neural_quota_exhausted');
+      localStorage.removeItem('lila_neural_quota_timestamp');
+    }
+  }
+}
+
 let currentPlaybackSessionId = 0;
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -382,7 +410,7 @@ export async function speakWithVoiceProfile(
       if (res.ok) {
         const data = await res.json();
         if (data.quotaExceeded) {
-          isNeuralQuotaExhausted = true;
+          setNeuralQuotaExhausted(true);
           console.info('Neural voice quota reached, switching seamlessly to browser speech synthesis.');
         } else if (data.audio && typeof data.audio === 'string' && data.audio.length > 50) {
           // Prepend synthetic micro-silences for natural human inhalation before playback starts
@@ -431,9 +459,13 @@ export async function speakWithVoiceProfile(
           }
         }
       } else if (res.status === 429) {
-        isNeuralQuotaExhausted = true;
+        setNeuralQuotaExhausted(true);
       }
-    } catch (err) {
+    } catch (err: any) {
+      const errStr = String(err);
+      if (errStr.includes('429') || errStr.includes('quota') || errStr.includes('RESOURCE_EXHAUSTED')) {
+        setNeuralQuotaExhausted(true);
+      }
       console.warn('Neural TTS request failed, using browser synthesis:', err);
     }
   }

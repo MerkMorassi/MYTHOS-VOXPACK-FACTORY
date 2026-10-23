@@ -68,10 +68,17 @@ assert(prependedBuffer.byteLength > fakeWavHeader.buffer.byteLength, 'Injected m
 
 // 6. Test ECHOS Chip Integration
 const { parseEchosLine, echos, ECHOS_VOICE_TAGS, ECHOS_EARCONS } = await import('../services/echos');
-assert(ECHOS_VOICE_TAGS.length === 12, '12 ECHOS voice tags defined');
+assert(ECHOS_VOICE_TAGS.length === 13, '13 ECHOS voice tags defined (including exhale)');
 assert(ECHOS_EARCONS.includes('floor_ack'), 'floor_ack earcon present');
 assert(ECHOS_EARCONS.includes('floor_yield'), 'floor_yield earcon present');
 assert(ECHOS_EARCONS.includes('floor_want'), 'floor_want earcon present');
+
+// Test auto-exhale injection during long pauses
+const pauseSample = 'Wait for it... there it is.';
+const plannedWithPause = echos.plan(pauseSample);
+// Since it's randomized, we might not always get an exhale, but we can check if it's possible
+const hasExhale = plannedWithPause.items.some(item => item.tag === 'exhale');
+console.log(`  - Auto-exhale check: ${hasExhale ? 'Triggered' : 'Not triggered (randomized)'}`);
 
 // Test ECHOS parsing
 const echosSample = 'That worked [hum:2] really nice. [sigh@-150ms] Finally done.';

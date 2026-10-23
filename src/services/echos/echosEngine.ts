@@ -4,6 +4,7 @@
 export type EchosVoiceTag = 
   | 'hum' 
   | 'breath' 
+  | 'exhale'
   | 'chirp' 
   | 'gasp' 
   | 'sigh' 
@@ -43,7 +44,7 @@ export interface EchosMoodMeta {
 }
 
 export const ECHOS_VOICE_TAGS: EchosVoiceTag[] = [
-  'hum', 'breath', 'chirp', 'gasp', 'sigh', 'purr',
+  'hum', 'breath', 'exhale', 'chirp', 'gasp', 'sigh', 'purr',
   'click', 'groan', 'tsk', 'moan', 'buzz', 'laugh'
 ];
 
@@ -151,6 +152,7 @@ export interface EchosState {
   level: number;
   lastTag?: string;
   speaking: boolean;
+  sessionActive: boolean;
   rr: Record<string, number>; // last take index per tag:lvl
 }
 
@@ -350,6 +352,32 @@ class WebAudioSynthBank {
         const env = ctx.createGain();
         env.gain.setValueAtTime(0.001, now);
         env.gain.exponentialRampToValueAtTime(0.18, now + durSec * 0.6);
+        env.gain.linearRampToValueAtTime(0.001, now + durSec);
+
+        noise.connect(filter);
+        filter.connect(env);
+        env.connect(masterGain);
+
+        noise.start(now);
+        noise.stop(now + durSec);
+        break;
+      }
+
+      case 'exhale': {
+        durationMs = lvl === 1 ? 400 : lvl === 3 ? 800 : 600;
+        const durSec = durationMs / 1000;
+        const noise = ctx.createBufferSource();
+        noise.buffer = this.createNoiseBuffer(ctx, durSec);
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(850 * pitchFactor, now);
+        filter.frequency.linearRampToValueAtTime(450 * pitchFactor, now + durSec);
+        filter.Q.setValueAtTime(1.2, now);
+
+        const env = ctx.createGain();
+        env.gain.setValueAtTime(0.001, now);
+        env.gain.exponentialRampToValueAtTime(0.12, now + 0.1);
         env.gain.linearRampToValueAtTime(0.001, now + durSec);
 
         noise.connect(filter);
@@ -739,13 +767,38 @@ export class EchosClient {
     hue: 215,
     level: 2,
     speaking: false,
+    sessionActive: false,
     rr: {},
   };
+
+  private idleTimer: any = null;
+  private readonly IDLE_THRESHOLD_MS = 30000;
 
   constructor() {
     if (typeof window !== 'undefined') {
       (window as any).MythosEchos = this;
     }
+  }
+
+  private resetIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+    if (this.state.sessionActive && !this.state.speaking) {
+      this.startIdleTimer();
+    }
+  }
+
+  private startIdleTimer(): void {
+    if (this.idleTimer) return;
+    this.idleTimer = setTimeout(() => {
+      if (this.state.sessionActive && !this.state.speaking) {
+        this.play('breath', 1, { db: -15 }); // Subtle idle breath
+        this.idleTimer = null;
+        this.startIdleTimer();
+      }
+    }, this.IDLE_THRESHOLD_MS);
   }
 
   async arm(): Promise<void> {
@@ -771,10 +824,19 @@ export class EchosClient {
   }
 
   setState(partial: Partial<EchosState>): void {
+    const oldSpeaking = this.state.speaking;
+    const oldSession = this.state.sessionActive;
+    
     this.state = { ...this.state, ...partial };
+    
     if (partial.mood && ECHOS_MOODS[partial.mood]) {
       this.state.hue = ECHOS_MOODS[partial.mood].hue;
     }
+    
+    if (this.state.speaking !== oldSpeaking || this.state.sessionActive !== oldSession) {
+      this.resetIdleTimer();
+    }
+    
     this.listeners.forEach(fn => fn(this.state));
   }
 
@@ -800,6 +862,7 @@ export class EchosClient {
     const db = opts?.db ?? jitter.db;
 
     this.setState({ lastTag: tag, level: clampedLvl });
+    this.resetIdleTimer();
 
     const result = this.synthBank.playSynthTake(tag, clampedLvl, take, cents, db);
 
@@ -830,9 +893,40 @@ export class EchosClient {
     const items: EchosSoundPlanItem[] = [];
 
     let currentMood = this.state.mood;
+    const msPerChar = 72; // Average timing for speech synthesis
+    let currentOffsetMs = 0;
 
     parsed.chunks.forEach((chunk, chunkIdx) => {
-      if (chunk.type === 'sound') {
+      if (chunk.type === 'text') {
+        const text = chunk.text;
+        
+        // Scan for long pauses (ellipsis or multiple periods)
+        const ellipsisRegex = /\.{2,}/g;
+        let match: RegExpExecArray | null;
+        while ((match = ellipsisRegex.exec(text)) !== null) {
+          // Randomized probability to inject a subtle exhale during a long pause
+          if (Math.random() > 0.35) {
+            const pauseOffset = currentOffsetMs + (match.index * msPerChar);
+            const take = pickTake('exhale', 1, this.state.rr['exhale:1']);
+            const jitter = computeJitter();
+            const db = -20 + (Math.random() * 6); // Very subtle
+
+            items.push({
+              tag: 'exhale',
+              lvl: 1,
+              take,
+              cents: jitter.cents,
+              db,
+              mode: 'offset',
+              offsetMs: Math.max(0, Math.round(pauseOffset + 50)),
+              durationMs: 600,
+              chunkIndex: chunkIdx,
+            });
+          }
+        }
+        
+        currentOffsetMs += text.length * msPerChar;
+      } else if (chunk.type === 'sound') {
         const rrKey = `${chunk.tag}:${chunk.lvl}`;
         const lastTake = this.state.rr[rrKey];
         const take = pickTake(chunk.tag, chunk.lvl, lastTake);
@@ -846,6 +940,28 @@ export class EchosClient {
           currentMood = aliasEntry.mood;
         }
 
+        // Use explicit offset if provided, otherwise estimate from current character position
+        const itemOffset = chunk.offsetMs !== 0 ? chunk.offsetMs : currentOffsetMs;
+
+        let durationMs = 350;
+        const tag = chunk.tag;
+        const lvl = chunk.lvl;
+        if (tag === 'sigh') durationMs = lvl === 1 ? 450 : lvl === 3 ? 850 : 650;
+        else if (tag === 'breath') durationMs = lvl === 1 ? 220 : lvl === 3 ? 420 : 320;
+        else if (tag === 'exhale') durationMs = lvl === 1 ? 400 : lvl === 3 ? 800 : 600;
+        else if (tag === 'gasp') durationMs = 180;
+        else if (tag === 'chirp') durationMs = 120;
+        else if (tag === 'laugh') durationMs = 420;
+        else if (tag === 'purr') durationMs = 500;
+        else if (tag === 'click') durationMs = 40;
+        else if (tag === 'tsk') durationMs = 120;
+        else if (tag === 'groan') durationMs = 380;
+        else if (tag === 'moan') durationMs = 450;
+        else if (tag === 'buzz') durationMs = 280;
+        else if (tag === 'floor_want') durationMs = 200;
+        else if (tag === 'floor_yield') durationMs = 240;
+        else if (tag === 'floor_ack') durationMs = 140;
+
         items.push({
           tag: chunk.tag,
           lvl: chunk.lvl,
@@ -853,8 +969,8 @@ export class EchosClient {
           cents: jitter.cents,
           db: jitter.db,
           mode: chunk.under ? 'under' : chunk.offsetMs !== 0 ? 'offset' : 'gap',
-          offsetMs: chunk.offsetMs,
-          durationMs: 300,
+          offsetMs: itemOffset,
+          durationMs,
           chunkIndex: chunkIdx,
         });
       }

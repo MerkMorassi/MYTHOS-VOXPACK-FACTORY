@@ -8,7 +8,7 @@ var echosExports = (function (global) {
   'use strict';
 
   var ECHOS_VOICE_TAGS = [
-    'hum', 'breath', 'chirp', 'gasp', 'sigh', 'purr',
+    'hum', 'breath', 'exhale', 'chirp', 'gasp', 'sigh', 'purr',
     'click', 'groan', 'tsk', 'moan', 'buzz', 'laugh'
   ];
 
@@ -219,6 +219,27 @@ var echosExports = (function (global) {
         bEnv.connect(masterGain);
         bNoise.start(now);
         bNoise.stop(now + bDur);
+        break;
+      }
+      case 'exhale': {
+        durationMs = lvl === 1 ? 400 : lvl === 3 ? 800 : 600;
+        var exDur = durationMs / 1000;
+        var exNoise = ctx.createBufferSource();
+        exNoise.buffer = this.createNoiseBuffer(ctx, exDur);
+        var exFilter = ctx.createBiquadFilter();
+        exFilter.type = 'bandpass';
+        exFilter.frequency.setValueAtTime(850 * pitchFactor, now);
+        exFilter.frequency.linearRampToValueAtTime(450 * pitchFactor, now + exDur);
+        exFilter.Q.setValueAtTime(1.2, now);
+        var exEnv = ctx.createGain();
+        exEnv.gain.setValueAtTime(0.001, now);
+        exEnv.gain.exponentialRampToValueAtTime(0.12, now + 0.1);
+        exEnv.gain.linearRampToValueAtTime(0.001, now + exDur);
+        exNoise.connect(exFilter);
+        exFilter.connect(exEnv);
+        exEnv.connect(masterGain);
+        exNoise.start(now);
+        exNoise.stop(now + exDur);
         break;
       }
       case 'gasp': {
@@ -514,9 +535,34 @@ var echosExports = (function (global) {
       hue: 215,
       level: 2,
       speaking: false,
+      sessionActive: false,
       rr: {}
     };
+    this.idleTimer = null;
+    this.IDLE_THRESHOLD_MS = 30000;
   }
+
+  EchosEngine.prototype.resetIdleTimer = function () {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
+    if (this.state.sessionActive && !this.state.speaking) {
+      this.startIdleTimer();
+    }
+  };
+
+  EchosEngine.prototype.startIdleTimer = function () {
+    var self = this;
+    if (this.idleTimer) return;
+    this.idleTimer = setTimeout(function () {
+      if (self.state.sessionActive && !self.state.speaking) {
+        self.play('breath', 1, { db: -15 }); // Subtle idle breath
+        self.idleTimer = null;
+        self.startIdleTimer();
+      }
+    }, this.IDLE_THRESHOLD_MS);
+  };
 
   EchosEngine.prototype.pickTake = function (tag, lvl) {
     var key = tag + ':' + lvl;
@@ -532,46 +578,84 @@ var echosExports = (function (global) {
     var items = [];
     var detectedMood = this.state.mood;
 
-    parsed.tags.forEach(function (soundChunk, idx) {
-      var tag = soundChunk.tag;
-      var lvl = soundChunk.lvl;
-      var take = self.pickTake(tag, lvl);
-      var cents = Math.round((Math.random() * 120 - 60) * 10) / 10;
-      var db = Math.round((Math.random() * 3 - 2) * 10) / 10;
-      var mode = soundChunk.under ? 'under' : (soundChunk.offsetMs !== 0 ? 'offset' : 'gap');
-      var durationMs = 350;
+    var msPerChar = 72; // Average timing for speech synthesis
+    var currentOffsetMs = 0;
 
-      if (tag === 'sigh') durationMs = lvl === 1 ? 450 : lvl === 3 ? 850 : 650;
-      else if (tag === 'breath') durationMs = lvl === 1 ? 220 : lvl === 3 ? 420 : 320;
-      else if (tag === 'gasp') durationMs = 180;
-      else if (tag === 'chirp') durationMs = 120;
-      else if (tag === 'laugh') durationMs = 420;
-      else if (tag === 'purr') durationMs = 500;
-      else if (tag === 'click') durationMs = 40;
-      else if (tag === 'tsk') durationMs = 120;
-      else if (tag === 'groan') durationMs = 380;
-      else if (tag === 'moan') durationMs = 450;
-      else if (tag === 'buzz') durationMs = 280;
-      else if (tag === 'floor_want') durationMs = 200;
-      else if (tag === 'floor_yield') durationMs = 240;
-      else if (tag === 'floor_ack') durationMs = 140;
+    parsed.chunks.forEach(function (chunk, idx) {
+      if (chunk.type === 'text') {
+        var text = chunk.text;
+        
+        // Scan for long pauses (ellipsis or multiple periods)
+        var ellipsisRegex = /\.{2,}/g;
+        var match;
+        while ((match = ellipsisRegex.exec(text)) !== null) {
+          // Randomized probability to inject a subtle exhale during a long pause
+          if (Math.random() > 0.35) {
+            var pauseOffset = currentOffsetMs + (match.index * msPerChar);
+            var take = self.pickTake('exhale', 1);
+            var cents = Math.round((Math.random() * 80 - 40) * 10) / 10;
+            var db = -20 + (Math.random() * 6); // Very subtle
 
-      items.push({
-        tag: tag,
-        lvl: lvl,
-        take: take,
-        cents: cents,
-        db: db,
-        mode: mode,
-        offsetMs: soundChunk.offsetMs,
-        durationMs: durationMs,
-        chunkIndex: idx
-      });
+            items.push({
+              tag: 'exhale',
+              lvl: 1,
+              take: take,
+              cents: cents,
+              db: db,
+              mode: 'offset',
+              offsetMs: Math.max(0, Math.round(pauseOffset + 50)),
+              durationMs: 600,
+              chunkIndex: idx
+            });
+          }
+        }
+        
+        currentOffsetMs += text.length * msPerChar;
+      } else if (chunk.type === 'sound') {
+        var tag = chunk.tag;
+        var lvl = chunk.lvl;
+        var take = self.pickTake(tag, lvl);
+        var cents = Math.round((Math.random() * 120 - 60) * 10) / 10;
+        var db = Math.round((Math.random() * 3 - 2) * 10) / 10;
+        var mode = chunk.under ? 'under' : (chunk.offsetMs !== 0 ? 'offset' : 'gap');
+        
+        // Use explicit offset if provided, otherwise estimate from current character position
+        var itemOffset = chunk.offsetMs !== 0 ? chunk.offsetMs : currentOffsetMs;
 
-      for (var m in ECHOS_MOODS) {
-        if (ECHOS_MOODS[m].defaultSound.tag === tag) {
-          detectedMood = m;
-          break;
+        var durationMs = 350;
+        if (tag === 'sigh') durationMs = lvl === 1 ? 450 : lvl === 3 ? 850 : 650;
+        else if (tag === 'breath') durationMs = lvl === 1 ? 220 : lvl === 3 ? 420 : 320;
+        else if (tag === 'exhale') durationMs = lvl === 1 ? 400 : lvl === 3 ? 800 : 600;
+        else if (tag === 'gasp') durationMs = 180;
+        else if (tag === 'chirp') durationMs = 120;
+        else if (tag === 'laugh') durationMs = 420;
+        else if (tag === 'purr') durationMs = 500;
+        else if (tag === 'click') durationMs = 40;
+        else if (tag === 'tsk') durationMs = 120;
+        else if (tag === 'groan') durationMs = 380;
+        else if (tag === 'moan') durationMs = 450;
+        else if (tag === 'buzz') durationMs = 280;
+        else if (tag === 'floor_want') durationMs = 200;
+        else if (tag === 'floor_yield') durationMs = 240;
+        else if (tag === 'floor_ack') durationMs = 140;
+
+        items.push({
+          tag: tag,
+          lvl: lvl,
+          take: take,
+          cents: cents,
+          db: db,
+          mode: mode,
+          offsetMs: itemOffset,
+          durationMs: durationMs,
+          chunkIndex: idx
+        });
+
+        for (var m in ECHOS_MOODS) {
+          if (ECHOS_MOODS[m].defaultSound.tag === tag) {
+            detectedMood = m;
+            break;
+          }
         }
       }
     });
@@ -620,12 +704,16 @@ var echosExports = (function (global) {
       lastTag: tag,
       level: lvl
     });
+    this.resetIdleTimer();
 
     return result;
   };
 
   EchosEngine.prototype.setState = function (partial) {
     var changed = false;
+    var oldSpeaking = this.state.speaking;
+    var oldSession = this.state.sessionActive;
+
     for (var k in partial) {
       if (partial[k] !== undefined && this.state[k] !== partial[k]) {
         this.state[k] = partial[k];
@@ -637,6 +725,9 @@ var echosExports = (function (global) {
       changed = true;
     }
     if (changed) {
+      if (this.state.speaking !== oldSpeaking || this.state.sessionActive !== oldSession) {
+        this.resetIdleTimer();
+      }
       var self = this;
       this.listeners.forEach(function (cb) { cb(self.state); });
     }
