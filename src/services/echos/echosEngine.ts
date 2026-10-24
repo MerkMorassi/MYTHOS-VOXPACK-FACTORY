@@ -257,6 +257,9 @@ export function computeJitter(): { cents: number; db: number } {
 
 class WebAudioSynthBank {
   private ctx: AudioContext | null = null;
+  private ttsGain: GainNode | null = null;
+  private ttsAnalyser: AnalyserNode | null = null;
+  private ttsAnalyserData: Float32Array | null = null;
 
   getContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -264,12 +267,49 @@ class WebAudioSynthBank {
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
+        this.ttsGain = this.ctx.createGain();
+        this.ttsAnalyser = this.ctx.createAnalyser();
+        this.ttsAnalyser.fftSize = 256;
+        this.ttsAnalyserData = new Float32Array(this.ttsAnalyser.frequencyBinCount);
+        
+        this.ttsGain.connect(this.ttsAnalyser);
+        this.ttsAnalyser.connect(this.ctx.destination);
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
     }
     return this.ctx;
+  }
+
+  getTTSGain(): GainNode | null {
+    this.getContext();
+    return this.ttsGain;
+  }
+
+  /**
+   * Returns current RMS power level of the TTS channel (0 to 1)
+   */
+  getTTSPower(): number {
+    if (!this.ttsAnalyser || !this.ttsAnalyserData) return 0;
+    this.ttsAnalyser.getFloatTimeDomainData(this.ttsAnalyserData as any);
+    let sum = 0;
+    for (let i = 0; i < this.ttsAnalyserData.length; i++) {
+      sum += this.ttsAnalyserData[i] * this.ttsAnalyserData[i];
+    }
+    return Math.sqrt(sum / this.ttsAnalyserData.length);
+  }
+
+  /**
+   * Connects an HTMLMediaElement to the engine's TTS channel for ducking support.
+   */
+  connectAssistantAudio(element: HTMLMediaElement): MediaElementAudioSourceNode | null {
+    const ctx = this.getContext();
+    if (!ctx || !this.ttsGain) return null;
+    
+    const source = ctx.createMediaElementSource(element);
+    source.connect(this.ttsGain);
+    return source;
   }
 
   private createNoiseBuffer(ctx: AudioContext, durationSeconds: number): AudioBuffer {
@@ -291,14 +331,15 @@ class WebAudioSynthBank {
     lvl: number,
     take: number,
     cents: number,
-    db: number
+    db: number,
+    whenTime?: number
   ): { durationMs: number; promise: Promise<void> } {
     const ctx = this.getContext();
     if (!ctx) {
       return { durationMs: 250, promise: Promise.resolve() };
     }
 
-    const now = ctx.currentTime;
+    const now = whenTime !== undefined ? Math.max(ctx.currentTime, whenTime) : ctx.currentTime;
     const masterGain = ctx.createGain();
     const gainScale = Math.pow(10, db / 20) * (lvl === 1 ? 0.65 : lvl === 3 ? 1.25 : 0.95);
     masterGain.gain.setValueAtTime(gainScale, now);
@@ -753,14 +794,93 @@ class WebAudioSynthBank {
 }
 
 // -------------------------------------------------------------
+// WEBAUDIO SAMPLER (WAV/MP3 Asset Support)
+// -------------------------------------------------------------
+
+class WebAudioSamplerBank {
+  private ctx: AudioContext | null = null;
+  private buffers: Map<string, AudioBuffer> = new Map();
+
+  constructor(private getContextFn: () => AudioContext | null) {}
+
+  async loadSample(tag: string, lvl: number, take: number, url: string): Promise<void> {
+    const ctx = this.getContextFn();
+    if (!ctx) return;
+
+    const key = `${tag}:${lvl}:${take}`;
+    if (this.buffers.has(key)) return;
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      this.buffers.set(key, audioBuffer);
+    } catch (e) {
+      console.warn(`[ECHOS] Failed to load sample ${key} from ${url}:`, e);
+    }
+  }
+
+  hasSample(tag: string, lvl: number, take: number): boolean {
+    return this.buffers.has(`${tag}:${lvl}:${take}`);
+  }
+
+  playSampleTake(
+    tag: string,
+    lvl: number,
+    take: number,
+    cents: number,
+    db: number,
+    whenTime?: number
+  ): { durationMs: number; promise: Promise<void> } {
+    const ctx = this.getContextFn();
+    const key = `${tag}:${lvl}:${take}`;
+    const buffer = this.buffers.get(key);
+
+    if (!ctx || !buffer) {
+      return { durationMs: 0, promise: Promise.resolve() };
+    }
+
+    const now = whenTime !== undefined ? Math.max(ctx.currentTime, whenTime) : ctx.currentTime;
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+
+    const pitchFactor = Math.pow(2, cents / 1200);
+    source.playbackRate.setValueAtTime(pitchFactor, now);
+
+    const gainNode = ctx.createGain();
+    const gainScale = Math.pow(10, db / 20);
+    gainNode.gain.setValueAtTime(gainScale, now);
+
+    source.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    source.start(now);
+
+    const durationMs = (buffer.duration / pitchFactor) * 1000;
+    const promise = new Promise<void>((resolve) => {
+      source.onended = () => {
+        source.disconnect();
+        gainNode.disconnect();
+        resolve();
+      };
+    });
+
+    return { durationMs, promise };
+  }
+}
+
+// -------------------------------------------------------------
 // ECHOS CLIENT / PERFORMER
 // -------------------------------------------------------------
 
 export class EchosClient {
   private synthBank = new WebAudioSynthBank();
+  private samplerBank = new WebAudioSamplerBank(() => this.synthBank.getContext());
   private listeners: Array<(state: EchosState) => void> = [];
   private eventListeners: Array<(event: EchosEvent) => void> = [];
   private eventLog: EchosEvent[] = [];
+  private activeBreathUntil: number = 0;
 
   state: EchosState = {
     mood: 'neutral',
@@ -775,8 +895,33 @@ export class EchosClient {
   private readonly IDLE_THRESHOLD_MS = 30000;
 
   constructor() {
+    this.loadPersistentRR();
     if (typeof window !== 'undefined') {
       (window as any).MythosEchos = this;
+    }
+  }
+
+  private loadPersistentRR(): void {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    try {
+      const saved = localStorage.getItem('echos_rr_state');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          this.state.rr = { ...parsed };
+        }
+      }
+    } catch (e) {
+      console.warn('[ECHOS] Could not load persistent RR state:', e);
+    }
+  }
+
+  public savePersistentRR(): void {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem('echos_rr_state', JSON.stringify(this.state.rr));
+    } catch (e) {
+      console.warn('[ECHOS] Could not save persistent RR state:', e);
     }
   }
 
@@ -808,6 +953,22 @@ export class EchosClient {
     }
   }
 
+  async loadSample(tag: string, lvl: number, take: number, url: string): Promise<void> {
+    await this.samplerBank.loadSample(tag, lvl, take, url);
+  }
+
+  /**
+   * Load a library of samples from a manifest object
+   * Format: { "hum:1:1": "/path/to/hum1.mp3", ... }
+   */
+  async loadLibrary(manifest: Record<string, string>): Promise<void> {
+    const jobs = Object.entries(manifest).map(([key, url]) => {
+      const [tag, lvl, take] = key.split(':');
+      return this.loadSample(tag, parseInt(lvl, 10), parseInt(take, 10), url);
+    });
+    await Promise.all(jobs);
+  }
+
   onState(fn: (state: EchosState) => void): () => void {
     this.listeners.push(fn);
     fn(this.state);
@@ -829,6 +990,10 @@ export class EchosClient {
     
     this.state = { ...this.state, ...partial };
     
+    if (partial.rr) {
+      this.savePersistentRR();
+    }
+
     if (partial.mood && ECHOS_MOODS[partial.mood]) {
       this.state.hue = ECHOS_MOODS[partial.mood].hue;
     }
@@ -847,15 +1012,50 @@ export class EchosClient {
   }
 
   /**
-   * Play a single nonverbal sound or earcon
+   * Returns current WebAudio AudioContext.currentTime for sample-accurate timeline scheduling.
    */
-  async play(tag: EchosTag, lvl: number = 2, opts?: { cents?: number; db?: number }): Promise<number> {
+  getAudioContextTime(): number {
+    const ctx = this.synthBank.getContext();
+    return ctx ? ctx.currentTime : 0;
+  }
+
+  /**
+   * Play a single nonverbal sound or earcon with optional sample-accurate AudioContext scheduling timestamp.
+   */
+  async play(
+    tag: EchosTag, 
+    lvl: number = 2, 
+    opts?: { cents?: number; db?: number; mode?: 'gap' | 'under' | 'offset'; take?: number; when?: number }
+  ): Promise<number> {
     await this.arm();
     const clampedLvl = Math.max(1, Math.min(3, lvl));
+    const mode = opts?.mode ?? 'gap';
+    const whenTime = opts?.when;
+
+    // SYNC-CHECK: For gap fillers and breaths, verify that TTS isn't currently speaking to prevent clipping/overlap
+    if ((mode === 'gap' || tag === 'breath' || tag === 'exhale') && whenTime === undefined) {
+      const maxRetries = 6; // Check for up to 300ms
+      let retries = 0;
+      while (retries < maxRetries) {
+        const power = this.synthBank.getTTSPower();
+        if (power < 0.008) break; // Silence threshold
+        
+        // TTS is active, wait for a natural gap
+        await new Promise(r => setTimeout(r, 50));
+        retries++;
+      }
+      
+      // If still not silent after retries, skip this filler to maintain clean speech
+      if (retries === maxRetries) {
+        return 0;
+      }
+    }
+
     const rrKey = `${tag}:${clampedLvl}`;
     const lastTake = this.state.rr[rrKey];
-    const take = pickTake(tag, clampedLvl, lastTake);
+    const take = opts?.take ?? pickTake(tag, clampedLvl, lastTake);
     this.state.rr[rrKey] = take;
+    this.savePersistentRR();
 
     const jitter = computeJitter();
     const cents = opts?.cents ?? jitter.cents;
@@ -864,25 +1064,135 @@ export class EchosClient {
     this.setState({ lastTag: tag, level: clampedLvl });
     this.resetIdleTimer();
 
-    const result = this.synthBank.playSynthTake(tag, clampedLvl, take, cents, db);
+    let result: { durationMs: number; promise: Promise<void> };
+    let src: 'sample' | 'synth' = 'synth';
+
+    if (this.samplerBank.hasSample(tag, clampedLvl, take)) {
+      result = this.samplerBank.playSampleTake(tag, clampedLvl, take, cents, db, whenTime);
+      src = 'sample';
+    } else {
+      result = this.synthBank.playSynthTake(tag, clampedLvl, take, cents, db, whenTime);
+      src = 'synth';
+    }
+
+    const scheduledOffsetMs = whenTime !== undefined ? Math.max(0, (whenTime - this.getAudioContextTime()) * 1000) : 0;
+
+    if (['breath', 'exhale', 'gasp', 'sigh'].includes(tag)) {
+      this.activeBreathUntil = Math.max(this.activeBreathUntil, Date.now() + scheduledOffsetMs + result.durationMs);
+    }
+
+    if (mode === 'under' && result.durationMs > 0) {
+      this.duckAssistant(result.durationMs, -12, whenTime);
+    }
 
     this.emitEvent({
       tag,
       take,
       lvl: clampedLvl,
-      t: Date.now(),
+      t: Date.now() + scheduledOffsetMs,
       ev: 'sfx',
-      src: 'synth',
+      src,
       cents,
       db,
-      mode: 'gap',
-      off: 0,
+      mode,
+      off: scheduledOffsetMs,
       out: 'audio',
       ms: result.durationMs,
     });
 
     await result.promise;
     return result.durationMs;
+  }
+
+  /**
+   * Schedules an entire ECHOS plan on the hardware AudioContext.currentTime timeline.
+   */
+  async schedulePlan(plan: EchosPlan, startAudioContextTime?: number): Promise<void> {
+    await this.arm();
+    const ctx = this.synthBank.getContext();
+    if (!ctx || !plan.items || plan.items.length === 0) return;
+
+    const baseTime = startAudioContextTime !== undefined ? startAudioContextTime : ctx.currentTime;
+
+    for (const item of plan.items) {
+      const scheduledTime = baseTime + (item.offsetMs / 1000);
+      this.play(item.tag, item.lvl, {
+        take: item.take,
+        cents: item.cents,
+        db: item.db,
+        mode: item.mode,
+        when: scheduledTime,
+      }).catch(err => console.warn('Schedule plan item error:', err));
+    }
+  }
+
+  /**
+   * Returns current RMS power level of the TTS channel (0 to 1).
+   */
+  getTTSPower(): number {
+    return this.synthBank.getTTSPower();
+  }
+
+  /**
+   * Returns detailed status of the ECHOS engine breath-buffer.
+   */
+  getBreathBufferStatus(): { active: boolean; remainingMs: number } {
+    const remaining = Math.max(0, this.activeBreathUntil - Date.now());
+    return {
+      active: remaining > 0,
+      remainingMs: remaining,
+    };
+  }
+
+  /**
+   * Hook/helper to check if the breath buffer is actively playing or decaying.
+   */
+  checkBreathBufferStatus(): boolean {
+    return this.getBreathBufferStatus().active;
+  }
+
+  /**
+   * Async wait hook that delays execution until any active breath buffer completes,
+   * ensuring breath injections do not clash with synthesized word audio.
+   */
+  async waitForBreathBuffer(maxWaitMs: number = 600): Promise<boolean> {
+    const startTime = Date.now();
+    while (this.checkBreathBufferStatus()) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed >= maxWaitMs) return false;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    return true;
+  }
+
+  /**
+   * Connect an external audio element (like the Assistant TTS) to the ECHOS engine.
+   * This allows the engine to duck the assistant volume when fillers play.
+   */
+  connectAssistantAudio(element: HTMLMediaElement): void {
+    this.synthBank.connectAssistantAudio(element);
+  }
+
+  /**
+   * Manually trigger a ducking event on the Assistant TTS channel.
+   */
+  duckAssistant(durationMs: number, targetDb: number = -12, whenTime?: number): void {
+    const gain = this.synthBank.getTTSGain();
+    const ctx = this.synthBank.getContext();
+    if (!gain || !ctx) return;
+
+    const now = whenTime !== undefined ? Math.max(ctx.currentTime, whenTime) : ctx.currentTime;
+    const targetGain = Math.pow(10, targetDb / 20);
+    
+    // Smooth ramp down
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.exponentialRampToValueAtTime(targetGain, now + 0.1);
+    
+    // Smooth ramp back up
+    const recoveryStart = now + (durationMs / 1000) - 0.15;
+    gain.gain.exponentialRampToValueAtTime(targetGain, Math.max(now + 0.11, recoveryStart));
+    gain.gain.exponentialRampToValueAtTime(1.0, Math.max(now + 0.12, recoveryStart + 0.2));
   }
 
   /**
@@ -908,6 +1218,8 @@ export class EchosClient {
           if (Math.random() > 0.35) {
             const pauseOffset = currentOffsetMs + (match.index * msPerChar);
             const take = pickTake('exhale', 1, this.state.rr['exhale:1']);
+            this.state.rr['exhale:1'] = take;
+            this.savePersistentRR();
             const jitter = computeJitter();
             const db = -20 + (Math.random() * 6); // Very subtle
 
@@ -931,6 +1243,7 @@ export class EchosClient {
         const lastTake = this.state.rr[rrKey];
         const take = pickTake(chunk.tag, chunk.lvl, lastTake);
         this.state.rr[rrKey] = take;
+        this.savePersistentRR();
 
         const jitter = computeJitter();
 

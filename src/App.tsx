@@ -22,8 +22,10 @@ import { runLoreExtractionWorker } from './services/loreExtractionWorker';
 import { MoodOption, getSavedMoodId, saveMoodId, getMoodById, extractContextualProsody } from './services/moodStore';
 import { getApiAuthHeaders } from './services/apiKeyStore';
 import { SettingsModal } from './components/SettingsModal';
+import { EchosTelemetryPanel } from './components/EchosTelemetryPanel';
 import { echos, identifyAndStripParalinguisticTags, stripParalinguisticTags, splitLineChunks } from './services/echos';
 import { voicePreBuffer } from './services/voicePreBufferService';
+import { audioLibrary } from './services/audioLibrary';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
@@ -33,7 +35,7 @@ export default function App() {
   const [conversationMomentum, setConversationMomentum] = useState<number>(1.0);
   
   const [orbTheme, setOrbTheme] = useState<OrbTheme>(() => {
-    return (localStorage.getItem('lila_orb_theme') as OrbTheme) || localStorage.getItem('maya_orb_theme') || 'spectral';
+    return (localStorage.getItem('lila_orb_theme') as OrbTheme) || (localStorage.getItem('maya_orb_theme') as OrbTheme) || 'spectral';
   });
 
   const [selectedVoice, setSelectedVoice] = useState<VoiceProfile>(() => {
@@ -113,6 +115,9 @@ Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
       setMessages(active.messages);
       setActiveSessionId(active.id);
     }
+
+    // Initialize ECHOS audio library
+    audioLibrary.initializeEngine().catch(err => console.warn('ECHOS Library init failed:', err));
   }, []);
 
   // Sync active persona's voice if available
@@ -153,6 +158,22 @@ Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
       voicePreBuffer.stop();
     }
   }, [isVoiceSessionActive, orbState]);
+
+  // Handle automated VAD interruptions
+  useEffect(() => {
+    const unsubscribe = voicePreBuffer.onInterruption(() => {
+      if (isVoiceSessionActiveRef.current) {
+        setOrbState('listening');
+        setOrbVolume(0);
+        try {
+          startListening();
+        } catch (err) {
+          console.warn('VAD interruption start listening error:', err);
+        }
+      }
+    });
+    return unsubscribe;
+  }, []);
 
   const handleSelectSession = (id: string) => {
     stopCurrentAudio();
@@ -647,6 +668,9 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
       />
+
+      {/* Collapsible ECHOS Telemetry & Event Stream Panel */}
+      <EchosTelemetryPanel />
     </div>
   );
 }

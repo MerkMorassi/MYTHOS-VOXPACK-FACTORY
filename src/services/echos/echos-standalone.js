@@ -133,12 +133,42 @@ var echosExports = (function (global) {
       var AudioCtx = window.AudioContext || window.webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
+        this.ttsGain = this.ctx.createGain();
+        this.ttsAnalyser = this.ctx.createAnalyser();
+        this.ttsAnalyser.fftSize = 256;
+        this.ttsAnalyserData = new Float32Array(this.ttsAnalyser.frequencyBinCount);
+        
+        this.ttsGain.connect(this.ttsAnalyser);
+        this.ttsAnalyser.connect(this.ctx.destination);
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(function () {});
     }
     return this.ctx;
+  };
+
+  WebAudioSynthBank.prototype.getTTSGain = function () {
+    this.getAudioContext();
+    return this.ttsGain;
+  };
+
+  WebAudioSynthBank.prototype.getTTSPower = function () {
+    if (!this.ttsAnalyser || !this.ttsAnalyserData) return 0;
+    this.ttsAnalyser.getFloatTimeDomainData(this.ttsAnalyserData);
+    var sum = 0;
+    for (var i = 0; i < this.ttsAnalyserData.length; i++) {
+      sum += this.ttsAnalyserData[i] * this.ttsAnalyserData[i];
+    }
+    return Math.sqrt(sum / this.ttsAnalyserData.length);
+  };
+
+  WebAudioSynthBank.prototype.connectAssistantAudio = function (element) {
+    var ctx = this.getAudioContext();
+    if (!ctx || !this.ttsGain) return null;
+    var source = ctx.createMediaElementSource(element);
+    source.connect(this.ttsGain);
+    return source;
   };
 
   WebAudioSynthBank.prototype.createNoiseBuffer = function (ctx, durationSec) {
@@ -523,13 +553,87 @@ var echosExports = (function (global) {
   };
 
   /**
+   * Sampler bank for playing pre-recorded audio assets (WAV/MP3)
+   */
+  function WebAudioSamplerBank(getContextFn) {
+    this.getContextFn = getContextFn;
+    this.buffers = {};
+  }
+
+  WebAudioSamplerBank.prototype.loadSample = function (tag, lvl, take, url) {
+    var self = this;
+    var ctx = this.getContextFn();
+    if (!ctx) return Promise.resolve();
+
+    var key = tag + ':' + lvl + ':' + take;
+    if (this.buffers[key]) return Promise.resolve();
+
+    return fetch(url)
+      .then(function (res) { 
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.arrayBuffer(); 
+      })
+      .then(function (ab) { return ctx.decodeAudioData(ab); })
+      .then(function (buffer) {
+        self.buffers[key] = buffer;
+      })
+      .catch(function (err) {
+        console.warn('[ECHOS] Failed to load sample ' + key + ' from ' + url, err);
+      });
+  };
+
+  WebAudioSamplerBank.prototype.hasSample = function (tag, lvl, take) {
+    return !!this.buffers[tag + ':' + lvl + ':' + take];
+  };
+
+  WebAudioSamplerBank.prototype.playSample = function (tag, lvl, take, cents, db) {
+    var ctx = this.getContextFn();
+    var key = tag + ':' + lvl + ':' + take;
+    var buffer = this.buffers[key];
+
+    if (!ctx || !buffer) {
+      return { durationMs: 0, promise: Promise.resolve() };
+    }
+
+    var now = ctx.currentTime;
+    var source = ctx.createBufferSource();
+    source.buffer = buffer;
+
+    var pitchFactor = Math.pow(2, (cents || 0) / 1200);
+    source.playbackRate.setValueAtTime(pitchFactor, now);
+
+    var gainNode = ctx.createGain();
+    var gainScale = Math.pow(10, (db || 0) / 20);
+    gainNode.gain.setValueAtTime(gainScale, now);
+
+    source.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    source.start(now);
+
+    var durationMs = (buffer.duration / pitchFactor) * 1000;
+    var promise = new Promise(function (resolve) {
+      source.onended = function () {
+        source.disconnect();
+        gainNode.disconnect();
+        resolve();
+      };
+    });
+
+    return { durationMs: durationMs, promise: promise };
+  };
+
+  /**
    * EchosEngine Client
    */
   function EchosEngine() {
     this.synthBank = new WebAudioSynthBank();
+    var self = this;
+    this.samplerBank = new WebAudioSamplerBank(function () { return self.synthBank.getAudioContext(); });
     this.listeners = [];
     this.eventListeners = [];
     this.eventLog = [];
+    this.activeBreathUntil = 0;
     this.state = {
       mood: 'neutral',
       hue: 215,
@@ -540,7 +644,34 @@ var echosExports = (function (global) {
     };
     this.idleTimer = null;
     this.IDLE_THRESHOLD_MS = 30000;
+    this.loadPersistentRR();
   }
+
+  EchosEngine.prototype.loadPersistentRR = function () {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    try {
+      var saved = localStorage.getItem('echos_rr_state');
+      if (saved) {
+        var parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          for (var k in parsed) {
+            this.state.rr[k] = parsed[k];
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[ECHOS] Could not load persistent RR state:', e);
+    }
+  };
+
+  EchosEngine.prototype.savePersistentRR = function () {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    try {
+      localStorage.setItem('echos_rr_state', JSON.stringify(this.state.rr));
+    } catch (e) {
+      console.warn('[ECHOS] Could not save persistent RR state:', e);
+    }
+  };
 
   EchosEngine.prototype.resetIdleTimer = function () {
     if (this.idleTimer) {
@@ -569,7 +700,24 @@ var echosExports = (function (global) {
     var last = this.state.rr[key] || 0;
     var next = (last % 5) + 1;
     this.state.rr[key] = next;
+    this.savePersistentRR();
     return next;
+  };
+
+  EchosEngine.prototype.loadSample = function (tag, lvl, take, url) {
+    return this.samplerBank.loadSample(tag, lvl, take, url);
+  };
+
+  EchosEngine.prototype.loadLibrary = function (manifest) {
+    var self = this;
+    var jobs = [];
+    for (var key in manifest) {
+      (function (k) {
+        var parts = k.split(':');
+        jobs.push(self.loadSample(parts[0], parseInt(parts[1]), parseInt(parts[2]), manifest[k]));
+      })(key);
+    }
+    return Promise.all(jobs);
   };
 
   EchosEngine.prototype.plan = function (line) {
@@ -671,28 +819,105 @@ var echosExports = (function (global) {
     };
   };
 
+  EchosEngine.prototype.getAudioContextTime = function () {
+    var ctx = this.synthBank.getAudioContext();
+    return ctx ? ctx.currentTime : 0;
+  };
+
+  EchosEngine.prototype.schedulePlan = function (plan, startAudioContextTime) {
+    if (!plan || !plan.items || plan.items.length === 0) return Promise.resolve();
+    var ctx = this.synthBank.getAudioContext();
+    if (!ctx) return Promise.resolve();
+
+    var baseTime = typeof startAudioContextTime === 'number' ? startAudioContextTime : ctx.currentTime;
+    var self = this;
+
+    plan.items.forEach(function (item) {
+      var scheduledTime = baseTime + (item.offsetMs / 1000);
+      self.play(item.tag, item.lvl, {
+        take: item.take,
+        cents: item.cents,
+        db: item.db,
+        mode: item.mode,
+        when: scheduledTime
+      });
+    });
+
+    return Promise.resolve();
+  };
+
   EchosEngine.prototype.play = function (tag, lvl, opts) {
     lvl = lvl || 2;
     opts = opts || {};
+    var mode = opts.mode || 'gap';
+    var whenTime = opts.when;
+    var self = this;
+
+    // SYNC-CHECK: For gap fillers and breaths, verify that TTS isn't currently speaking
+    if ((mode === 'gap' || tag === 'breath' || tag === 'exhale') && whenTime === undefined) {
+      return new Promise(function (resolve) {
+        var retries = 0;
+        var maxRetries = 6;
+        function checkSilence() {
+          var power = self.synthBank.getTTSPower();
+          if (power < 0.008 || retries >= maxRetries) {
+            if (retries >= maxRetries) {
+              resolve({ durationMs: 0, promise: Promise.resolve() });
+            } else {
+              resolve(self._executePlay(tag, lvl, opts));
+            }
+          } else {
+            retries++;
+            setTimeout(checkSilence, 50);
+          }
+        }
+        checkSilence();
+      });
+    }
+
+    return this._executePlay(tag, lvl, opts);
+  };
+
+  EchosEngine.prototype._executePlay = function (tag, lvl, opts) {
     var take = opts.take || this.pickTake(tag, lvl);
     var cents = typeof opts.cents === 'number' ? opts.cents : (Math.random() * 80 - 40);
     var db = typeof opts.db === 'number' ? opts.db : (Math.random() * 2 - 1);
     var mode = opts.mode || 'gap';
+    var whenTime = opts.when;
     var off = opts.off || 0;
 
-    var result = this.synthBank.playProcedural(tag, lvl, take, cents, db);
+    var result;
+    var src = 'synth';
+
+    if (this.samplerBank.hasSample(tag, lvl, take)) {
+      result = this.samplerBank.playSample(tag, lvl, take, cents, db, whenTime);
+      src = 'sample';
+    } else {
+      result = this.synthBank.playProcedural(tag, lvl, take, cents, db, whenTime);
+      src = 'synth';
+    }
+
+    var scheduledOffsetMs = typeof whenTime === 'number' ? Math.max(0, (whenTime - this.getAudioContextTime()) * 1000) : 0;
+
+    if (tag === 'breath' || tag === 'exhale' || tag === 'gasp' || tag === 'sigh') {
+      this.activeBreathUntil = Math.max(this.activeBreathUntil, Date.now() + scheduledOffsetMs + result.durationMs);
+    }
+
+    if (mode === 'under' && result.durationMs > 0) {
+      this.duckAssistant(result.durationMs, -12, whenTime);
+    }
 
     var ev = {
       tag: tag,
       take: take,
       lvl: lvl,
-      t: Date.now(),
+      t: Date.now() + scheduledOffsetMs,
       ev: 'sfx',
-      src: 'synth',
+      src: src,
       cents: cents,
       db: db,
       mode: mode,
-      off: off,
+      off: scheduledOffsetMs,
       out: 'audio',
       ms: result.durationMs
     };
@@ -709,6 +934,56 @@ var echosExports = (function (global) {
     return result;
   };
 
+  EchosEngine.prototype.getBreathBufferStatus = function () {
+    var remaining = Math.max(0, this.activeBreathUntil - Date.now());
+    return {
+      active: remaining > 0,
+      remainingMs: remaining
+    };
+  };
+
+  EchosEngine.prototype.checkBreathBufferStatus = function () {
+    return this.getBreathBufferStatus().active;
+  };
+
+  EchosEngine.prototype.waitForBreathBuffer = function (maxWaitMs) {
+    maxWaitMs = maxWaitMs || 600;
+    var self = this;
+    var startTime = Date.now();
+    return new Promise(function (resolve) {
+      function poll() {
+        if (!self.checkBreathBufferStatus() || (Date.now() - startTime >= maxWaitMs)) {
+          resolve(!self.checkBreathBufferStatus());
+        } else {
+          setTimeout(poll, 25);
+        }
+      }
+      poll();
+    });
+  };
+
+  EchosEngine.prototype.connectAssistantAudio = function (element) {
+    this.synthBank.connectAssistantAudio(element);
+  };
+
+  EchosEngine.prototype.duckAssistant = function (durationMs, targetDb) {
+    targetDb = targetDb || -12;
+    var gain = this.synthBank.getTTSGain();
+    var ctx = this.synthBank.getAudioContext();
+    if (!gain || !ctx) return;
+
+    var now = ctx.currentTime;
+    var targetGain = Math.pow(10, targetDb / 20);
+
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.exponentialRampToValueAtTime(targetGain, now + 0.1);
+
+    var recoveryStart = now + (durationMs / 1000) - 0.15;
+    gain.gain.exponentialRampToValueAtTime(targetGain, Math.max(now + 0.11, recoveryStart));
+    gain.gain.exponentialRampToValueAtTime(1.0, Math.max(now + 0.12, recoveryStart + 0.2));
+  };
+
   EchosEngine.prototype.setState = function (partial) {
     var changed = false;
     var oldSpeaking = this.state.speaking;
@@ -723,6 +998,9 @@ var echosExports = (function (global) {
     if (partial.mood && ECHOS_MOODS[partial.mood]) {
       this.state.hue = ECHOS_MOODS[partial.mood].hue;
       changed = true;
+    }
+    if (partial.rr) {
+      this.savePersistentRR();
     }
     if (changed) {
       if (this.state.speaking !== oldSpeaking || this.state.sessionActive !== oldSession) {

@@ -56,7 +56,7 @@ export interface CloningProgress {
 import { MoodOption, extractContextualProsody } from './moodStore';
 import { getApiAuthHeaders } from './apiKeyStore';
 import { injectMicroSilences } from './audioProcessor';
-import { echos, prepareMessageForTTS, stripParalinguisticTags } from './echos';
+import { echos, prepareMessageForTTS, stripParalinguisticTags, paceEngine } from './echos';
 
 let activeAudioElement: HTMLAudioElement | null = null;
 let isNeuralQuotaExhausted = (() => {
@@ -352,6 +352,28 @@ export function getActiveAudioElement(): HTMLAudioElement | null {
 }
 
 /**
+ * Hook / helper function to explicitly check the ECHOS engine's breath-buffer status.
+ * Returns true if a breath buffer (e.g. inhale/exhale sound) is actively playing or decaying.
+ */
+export function checkBreathBufferStatus(): boolean {
+  return echos.checkBreathBufferStatus();
+}
+
+/**
+ * Hook / helper function to retrieve detailed breath-buffer status from the ECHOS engine.
+ */
+export function getBreathBufferStatus(): { active: boolean; remainingMs: number } {
+  return echos.getBreathBufferStatus();
+}
+
+/**
+ * Hook / helper function to wait for active breath buffer to complete before starting word audio.
+ */
+export async function waitForBreathBuffer(maxWaitMs: number = 600): Promise<boolean> {
+  return echos.waitForBreathBuffer(maxWaitMs);
+}
+
+/**
  * Strictly synchronized voice playback to guarantee only 1 voice ever speaks at a time
  */
 export async function speakWithVoiceProfile(
@@ -419,16 +441,14 @@ export async function speakWithVoiceProfile(
           const audioSrc = `data:audio/wav;base64,${processedAudio}`;
           const audio = new Audio(audioSrc);
           activeAudioElement = audio;
+          
+          // Connect to ECHOS for ducking support
+          echos.connectAssistantAudio(audio);
 
-          // Trigger ECHOS paralinguistic sound takes on timeline
+          // Trigger ECHOS paralinguistic sound takes with sample-accurate AudioContext timeline alignment
           if (echosPlan.items.length > 0) {
-            echosPlan.items.forEach(item => {
-              setTimeout(() => {
-                if (currentPlaybackSessionId === thisSessionId) {
-                  echos.play(item.tag, item.lvl, { cents: item.cents, db: item.db });
-                }
-              }, Math.max(0, item.offsetMs));
-            });
+            const audioContextStart = echos.getAudioContextTime();
+            echos.schedulePlan(echosPlan, audioContextStart);
           }
 
           audio.onended = () => {
@@ -449,6 +469,10 @@ export async function speakWithVoiceProfile(
           };
 
           try {
+            // Explicitly check breath-buffer status to ensure breath-injections never clash with synthesized word start
+            await echos.waitForBreathBuffer(600);
+            if (currentPlaybackSessionId !== thisSessionId) return;
+
             await audio.play();
             return; // Successfully playing neural audio, do NOT fall through
           } catch (playErr) {
@@ -476,7 +500,7 @@ export async function speakWithVoiceProfile(
   }
 }
 
-function fallbackSpeechSynthesis(
+async function fallbackSpeechSynthesis(
   text: string, 
   profile: VoiceProfile, 
   onEnd: () => void,
@@ -491,6 +515,10 @@ function fallbackSpeechSynthesis(
     return;
   }
 
+  // Explicitly check breath-buffer status to ensure breath-injections never clash with synthesized word start
+  await echos.waitForBreathBuffer(600);
+  if (currentPlaybackSessionId !== sessionId) return;
+
   // Extract contextual prosody if present and strip tag from utterance
   const { cleanText, mood: detectedMood } = extractContextualProsody(text);
   const effectiveMood = mood || detectedMood;
@@ -501,21 +529,25 @@ function fallbackSpeechSynthesis(
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(cleanDialogueForTTS);
     
-    // Modulate pitch and tempo with selected emotional mood
+    // Calculate smoothed PaceVector via PaceEngine for natural rate and prosody transitions
     const basePitch = profile.pitch || 1.0;
     const baseRate = profile.rate || 1.0;
-    const pitchMod = effectiveMood?.pitchMod ?? 1.0;
-    const rateMod = effectiveMood?.rateMod ?? 1.0;
     const rawVolume = effectiveMood?.volumeMod ?? 1.0;
+
+    const paceVector = paceEngine.updateState({
+      momentum,
+      mood: effectiveMood,
+      text: cleanDialogueForTTS,
+      baseRate,
+    });
 
     // Express loudness > 1.0 through elevated pitch and projection rate in browser fallback
     const loudnessExcess = Math.max(0, rawVolume - 1.0);
     const loudnessPitchMultiplier = 1.0 + loudnessExcess * 0.4;
     const loudnessRateMultiplier = 1.0 + loudnessExcess * 0.25;
 
-    const momentumRate = typeof momentum === 'number' ? Math.max(0.7, Math.min(1.4, momentum)) : 1.0;
-    utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch * pitchMod * loudnessPitchMultiplier));
-    utterance.rate = Math.max(0.6, Math.min(1.8, baseRate * rateMod * loudnessRateMultiplier * momentumRate));
+    utterance.pitch = Math.max(0.5, Math.min(2.0, basePitch * paceVector.pitchMod * loudnessPitchMultiplier));
+    utterance.rate = Math.max(0.6, Math.min(1.8, paceVector.effectiveRate * loudnessRateMultiplier));
     utterance.volume = Math.max(0.0, Math.min(1.0, rawVolume));
 
     const voices = window.speechSynthesis.getVoices();

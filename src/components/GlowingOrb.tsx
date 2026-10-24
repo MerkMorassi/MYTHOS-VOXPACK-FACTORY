@@ -97,12 +97,23 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
     }
   };
 
+  const isBreathingSfx = activeSfxTag === 'breath' || activeSfxTag === 'exhale' || activeSfxTag === 'gasp' || activeSfxTag === 'sigh';
+
   return (
     <div className="flex flex-col items-center justify-center py-8 px-4 relative">
-      {/* Ambient background glow synchronized with ECHOS mood hue */}
-      <div 
-        className="absolute w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-700 animate-pulse"
+      {/* Ambient background glow synchronized with ECHOS mood hue & breath pulse */}
+      <motion.div 
+        className="absolute w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-700"
         style={{ backgroundColor: `hsl(${echosState.hue}, 70%, 55%, 0.16)` }}
+        animate={{
+          scale: isBreathingSfx ? [1, 1.25, 1] : (isVoiceSessionActive && state === 'idle') ? [1, 1.14, 1] : [1, 1.05, 1],
+          opacity: isBreathingSfx ? [0.2, 0.45, 0.2] : (isVoiceSessionActive && state === 'idle') ? [0.18, 0.30, 0.18] : [0.12, 0.22, 0.12],
+        }}
+        transition={{
+          duration: isBreathingSfx ? 1.8 : (isVoiceSessionActive && state === 'idle') ? 4.0 : 3.0,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
       />
 
       {/* Theme Selector Menu */}
@@ -141,15 +152,49 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
           </>
         )}
 
+        {/* Subtle breathing pulse ring during voice session idle periods and ECHOS breath events */}
+        {(isBreathingSfx || (isVoiceSessionActive && state === 'idle')) && (
+          <motion.div
+            className="absolute w-56 h-56 rounded-full border border-teal-400/40 shadow-lg shadow-teal-500/20 pointer-events-none"
+            animate={{
+              scale: isBreathingSfx ? [0.95, 1.25, 1.0] : [1.0, 1.15, 1.0],
+              opacity: isBreathingSfx ? [0.8, 0.2, 0.8] : [0.3, 0.6, 0.3],
+            }}
+            transition={{
+              duration: isBreathingSfx ? 1.8 : 4.0,
+              repeat: Infinity,
+              ease: 'easeInOut',
+            }}
+          />
+        )}
+
         {/* Central Orb */}
         <motion.button
           onClick={onToggleListening}
           className={`relative w-44 h-44 rounded-full bg-gradient-to-br ${getThemeStyles()} shadow-2xl flex items-center justify-center cursor-pointer transition-transform duration-300 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-violet-500/40`}
           animate={{
-            scale: state === 'speaking' ? [1, 1.08 + (volume / 100), 1] : state === 'thinking' ? [1, 0.96, 1] : state === 'listening' ? [1, 1.05, 1] : [1, 1.02, 1],
+            scale: state === 'speaking' 
+              ? [1, 1.08 + (volume / 100), 1] 
+              : state === 'thinking' 
+                ? [1, 0.96, 1] 
+                : state === 'listening' 
+                  ? [1, 1.05, 1] 
+                  : isBreathingSfx 
+                    ? [1, 1.07, 1.02, 1] 
+                    : (isVoiceSessionActive && state === 'idle') 
+                      ? [1, 1.04, 1] 
+                      : [1, 1.02, 1],
           }}
           transition={{
-            duration: state === 'speaking' ? 0.2 : state === 'listening' ? 1.5 : 3,
+            duration: state === 'speaking' 
+              ? 0.2 
+              : state === 'listening' 
+                ? 1.5 
+                : isBreathingSfx 
+                  ? 1.8 
+                  : (isVoiceSessionActive && state === 'idle') 
+                    ? 4.0 
+                    : 3.0,
             repeat: Infinity,
             ease: 'easeInOut'
           }}

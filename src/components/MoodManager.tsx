@@ -28,7 +28,7 @@ import {
   setContextualProsodyEnabled,
   generateTone
 } from '../services/moodStore';
-import { speakWithVoiceProfile, stopCurrentAudio, getSavedVoiceProfiles } from '../services/voiceCloneService';
+import { speakWithVoiceProfile, stopCurrentAudio, getSavedVoiceProfiles, VoiceProfile } from '../services/voiceCloneService';
 
 export const MoodManager: React.FC = () => {
   const [moods, setMoods] = useState<MoodOption[]>(getSavedMoods());
@@ -121,12 +121,15 @@ export const MoodManager: React.FC = () => {
     const activeProfile = profiles[0] || {
       id: 'default',
       name: 'Lila Prime',
+      sampleUrl: '',
       pitch: 1.0,
       rate: 1.0,
       tone: 'velvet',
       baseVoice: 'Kore',
-      vocalStyle: 'Warm conversational female voice'
-    };
+      vocalStyle: 'Warm conversational female voice',
+      duration: 0,
+      createdAt: Date.now()
+    } as VoiceProfile;
 
     const previewSentence = `Speaking with ${mood.tag} cadence. ${mood.description.slice(0, 75)}.`;
 

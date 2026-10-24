@@ -31,6 +31,8 @@ import {
   OTHER_VOICE_MODELS
 } from '../services/voiceCloneService';
 import { SystemPromptTuner } from './SystemPromptTuner';
+import { SamplerStudio } from './SamplerStudio';
+import { Radio } from 'lucide-react';
 
 interface VoiceCloneStudioProps {
   selectedVoice: VoiceProfile;
@@ -47,6 +49,7 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
   setCustomInstructions,
   onResetInstructions 
 }) => {
+  const [activeSubTab, setActiveSubTab] = useState<'profiles' | 'sampler'>('profiles');
   const [profiles, setProfiles] = useState<VoiceProfile[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [cloningProgress, setCloningProgress] = useState<CloningProgress | null>(null);
@@ -231,6 +234,36 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
           />
         </label>
       </div>
+
+      {/* Sub-navigation Tabs: Voice Profiles vs Sampler Studio */}
+      <div className="flex gap-2 border-b border-slate-800 pb-3">
+        <button
+          onClick={() => setActiveSubTab('profiles')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            activeSubTab === 'profiles'
+              ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/30'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+        >
+          <Mic className="w-4 h-4" /> Agent Voice Profiles & System Prompt
+        </button>
+
+        <button
+          onClick={() => setActiveSubTab('sampler')}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+            activeSubTab === 'sampler'
+              ? 'bg-violet-600 text-white shadow-lg shadow-violet-600/30'
+              : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+          }`}
+        >
+          <Radio className="w-4 h-4 text-emerald-400" /> ECHOS Sampler Recording Studio
+        </button>
+      </div>
+
+      {activeSubTab === 'sampler' ? (
+        <SamplerStudio selectedVoice={selectedVoice} />
+      ) : (
+        <>
 
       {/* Progress Feedback Banner for Voice Cloning */}
       {cloningProgress && (
@@ -570,6 +603,8 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
           })}
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

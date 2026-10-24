@@ -6,6 +6,7 @@ import { GoogleGenAI } from '@google/genai';
 import { EXHAUSTIVE_MOODS, findMoodByTag, extractContextualProsody, MoodOption } from './src/services/moodStore';
 import { parseVoxLine } from './src/services/voxLineParser';
 import { injectMicroSilences } from './src/services/audioProcessor';
+import { paceEngine } from './src/services/echos/paceEngine';
 
 dotenv.config();
 
@@ -251,17 +252,19 @@ app.post('/api/tts', async (req, res) => {
     const defaultMood = mood || findMoodByTag('joyful') || EXHAUSTIVE_MOODS[0];
     const voxLine = parseVoxLine(text, defaultMood);
 
-    // Apply turn momentum to speech synthesis pacing if provided
-    if (typeof momentum === 'number' && !isNaN(momentum)) {
-      voxLine.segments.forEach(seg => {
-        seg.pace.rate = Math.max(0.6, Math.min(1.5, Number((seg.pace.rate * momentum).toFixed(2))));
-        if (momentum > 1.35) {
-          seg.pace.articulation = 'staccato';
-        } else if (momentum < 0.8) {
-          seg.pace.articulation = 'legato';
-        }
-      });
-    }
+    // Calculate pace vector via PaceEngine for natural conversational transitions
+    const paceVector = paceEngine.updateState({
+      momentum,
+      mood: defaultMood,
+      text,
+      baseRate: voiceProfile?.rate || 1.0,
+    });
+
+    voxLine.segments.forEach(seg => {
+      seg.pace.rate = paceVector.effectiveRate;
+      seg.pace.pause = paceVector.pauseTier;
+      seg.pace.articulation = paceVector.articulation;
+    });
 
     const baseVoice = voiceProfile?.baseVoice || 'Kore';
     const baseVocalStyle = voiceProfile?.vocalStyle || 'Warm, authentic, natural conversational female voice';

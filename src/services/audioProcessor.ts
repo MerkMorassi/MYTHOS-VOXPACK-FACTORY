@@ -150,12 +150,86 @@ function prependWavSilenceBase64(base64: string, durationMs: number): string {
 }
 
 /**
+ * Injects subtle, randomized 'exhale' noise into silent regions (> 400ms) of a WAV buffer.
+ * This simulates organic breathing during natural speech pauses.
+ */
+function injectContextualExhales(buffer: ArrayBuffer): ArrayBuffer {
+  if (buffer.byteLength < 44) return buffer;
+
+  const view = new DataView(buffer);
+  const sampleRate = view.getUint32(24, true);
+  const channels = view.getUint16(22, true);
+  const bytesPerSample = view.getUint16(34, true) / 8;
+  const pcmDataOffset = 44;
+  const samples = (buffer.byteLength - pcmDataOffset) / (bytesPerSample * channels);
+
+  if (channels !== 1 || bytesPerSample !== 2) {
+    // Currently only optimized for 16-bit mono WAVs (common for TTS)
+    return buffer;
+  }
+
+  const silenceThreshold = 150; // Amplitude threshold for "silence"
+  const minPauseSamples = Math.floor(sampleRate * 0.45); // ~450ms pause
+  
+  let pauseStart = -1;
+  const pauses: Array<{ start: number; length: number }> = [];
+
+  for (let i = 0; i < samples; i++) {
+    const val = Math.abs(view.getInt16(pcmDataOffset + i * 2, true));
+    if (val < silenceThreshold) {
+      if (pauseStart === -1) pauseStart = i;
+    } else {
+      if (pauseStart !== -1) {
+        const length = i - pauseStart;
+        if (length > minPauseSamples) {
+          pauses.push({ start: pauseStart, length });
+        }
+        pauseStart = -1;
+      }
+    }
+  }
+
+  // Process pauses in reverse to not affect indices (though we aren't changing length here)
+  pauses.forEach(pause => {
+    // 35% chance to skip for natural variation
+    if (Math.random() < 0.35) return;
+
+    const breathLength = Math.min(pause.length, Math.floor(sampleRate * 0.7)); // Max 700ms breath
+    const breathStart = pause.start + Math.floor((pause.length - breathLength) / 2);
+    
+    // Simple band-limited noise generator (filtered white noise)
+    let lastOut = 0;
+    for (let j = 0; j < breathLength; j++) {
+      const white = Math.random() * 2 - 1;
+      // Simple 1-pole lowpass at ~800Hz for breathy texture
+      const filtered = (lastOut + 0.1 * white) / 1.1;
+      lastOut = filtered;
+
+      // Envelope: Linear ramp up (15%) and exponential ramp down (85%)
+      let env = 0;
+      const progress = j / breathLength;
+      if (progress < 0.15) {
+        env = progress / 0.15;
+      } else {
+        env = Math.pow(1 - (progress - 0.15) / 0.85, 2);
+      }
+
+      const sampleIdx = pcmDataOffset + (breathStart + j) * 2;
+      const original = view.getInt16(sampleIdx, true);
+      const noise = filtered * 1800 * env; // Intensity scale
+      
+      // Mix noise into original buffer (likely silence)
+      const mixed = Math.max(-32768, Math.min(32767, original + noise));
+      view.setInt16(sampleIdx, Math.round(mixed), true);
+    }
+  });
+
+  return buffer;
+}
+
+/**
  * Injects synthetic micro-silences into raw audio stream or returns computed timing gaps.
- *
- * Usage:
- * - `injectMicroSilences(pace)` -> returns MicroSilenceConfig
- * - `injectMicroSilences(base64Audio, pace)` -> returns processed base64 audio string
- * - `injectMicroSilences(arrayBuffer, pace)` -> returns processed ArrayBuffer
+ * Also performs contextual breath injection for natural-sounding pauses.
  */
 export function injectMicroSilences(pace: Pace): MicroSilenceConfig;
 export function injectMicroSilences(audioData: string, pace: Pace): string;
@@ -180,12 +254,43 @@ export function injectMicroSilences(
 
   // If first is base64 string
   if (typeof first === 'string') {
-    return prependWavSilenceBase64(first, config.inhalationDurationMs);
+    try {
+      const cleanBase64 = first.replace(/^data:audio\/\w+;base64,/, '');
+      const binaryString = atob(cleanBase64);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // 1. Prepend start silence/inhalation
+      let processedBuffer = prependWavSilenceArrayBuffer(bytes.buffer, config.inhalationDurationMs);
+      
+      // 2. Inject randomized breaths during pauses
+      processedBuffer = injectContextualExhales(processedBuffer);
+
+      // Convert back to base64
+      let processedBinary = '';
+      const processedBytes = new Uint8Array(processedBuffer);
+      const chunkSize = 8192;
+      for (let i = 0; i < processedBytes.length; i += chunkSize) {
+        processedBinary += String.fromCharCode.apply(
+          null,
+          Array.from(processedBytes.subarray(i, i + chunkSize))
+        );
+      }
+      return btoa(processedBinary);
+    } catch (err) {
+      console.warn('Failed to process WAV audio, using original:', err);
+      return first;
+    }
   }
 
   // If first is ArrayBuffer
   if (first instanceof ArrayBuffer) {
-    return prependWavSilenceArrayBuffer(first, config.inhalationDurationMs);
+    let processed = prependWavSilenceArrayBuffer(first, config.inhalationDurationMs);
+    processed = injectContextualExhales(processed);
+    return processed;
   }
 
   return config;
