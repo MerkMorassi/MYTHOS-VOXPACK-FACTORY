@@ -11,6 +11,7 @@
 
 import { echos } from './echos';
 import { stopCurrentAudio, getActiveAudioElement } from './voiceCloneService';
+import { ensureAudioContextResumed } from './audioContextManager';
 
 export interface VoicePreBufferState {
   isActive: boolean;
@@ -190,7 +191,7 @@ class VoicePreBufferService {
 
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.audioContext = await ensureAudioContextResumed();
       
       // 500ms rolling buffer size
       this.bufferSize = Math.floor(this.audioContext.sampleRate * 0.5);
@@ -310,7 +311,6 @@ class VoicePreBufferService {
       this.stream = null;
     }
     if (this.audioContext) {
-      this.audioContext.close();
       this.audioContext = null;
     }
     

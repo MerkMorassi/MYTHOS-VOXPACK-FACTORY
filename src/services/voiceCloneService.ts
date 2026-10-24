@@ -57,6 +57,7 @@ import { MoodOption, extractContextualProsody } from './moodStore';
 import { getApiAuthHeaders } from './apiKeyStore';
 import { injectMicroSilences } from './audioProcessor';
 import { echos, prepareMessageForTTS, stripParalinguisticTags, paceEngine } from './echos';
+import { decodeAudioDataShared } from './audioContextManager';
 
 let activeAudioElement: HTMLAudioElement | null = null;
 let isNeuralQuotaExhausted = (() => {
@@ -125,8 +126,7 @@ export async function uploadAndProcessVoiceSample(
   report('decoding', 'Decoding waveform acoustics & calculating duration...', 35);
   let duration = 0;
   try {
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+    const audioBuffer = await decodeAudioDataShared(arrayBuffer);
     duration = audioBuffer.duration;
   } catch (err) {
     console.warn('Could not decode audio duration locally:', err);

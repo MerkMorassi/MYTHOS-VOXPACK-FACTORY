@@ -1,6 +1,8 @@
 // ECHOS Chip - Engine & Performer (SYS.AI.MAYA.SESAME v1.0.0)
 // Paralinguistic vocal fillers, multi-take sampling, and turn-taking earcons
 
+import { getSharedAudioContext } from '../audioContextManager';
+
 export type EchosVoiceTag = 
   | 'hum' 
   | 'breath' 
@@ -244,11 +246,16 @@ export function pickTake(tag: string, lvl: number, lastTake?: number): number {
   return candidates[pickedIndex] || 1;
 }
 
-export function computeJitter(): { cents: number; db: number } {
-  // Jitter: +/- 8 cents, +/- 1.0 dB gain jitter
+export function getTemporalJitterSec(minMs = 8, maxMs = 28): number {
+  return (minMs + Math.random() * (maxMs - minMs)) / 1000;
+}
+
+export function computeJitter(): { cents: number; db: number; temporalJitterSec: number } {
+  // Jitter: +/- 8 cents, +/- 1.0 dB gain jitter, 8ms-28ms natural human speech onset micro-jitter
   const cents = Math.round((Math.random() * 16 - 8) * 10) / 10;
   const db = Math.round((Math.random() * 2.0 - 1.0) * 10) / 10;
-  return { cents, db };
+  const temporalJitterSec = Math.round(getTemporalJitterSec(8, 28) * 1000) / 1000;
+  return { cents, db, temporalJitterSec };
 }
 
 // -------------------------------------------------------------
@@ -264,9 +271,8 @@ class WebAudioSynthBank {
   getContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
+      try {
+        this.ctx = getSharedAudioContext();
         this.ttsGain = this.ctx.createGain();
         this.ttsAnalyser = this.ctx.createAnalyser();
         this.ttsAnalyser.fftSize = 256;
@@ -274,6 +280,8 @@ class WebAudioSynthBank {
         
         this.ttsGain.connect(this.ttsAnalyser);
         this.ttsAnalyser.connect(this.ctx.destination);
+      } catch (err) {
+        console.warn('[ECHOS] Failed to initialize shared AudioContext:', err);
       }
     }
     if (this.ctx && this.ctx.state === 'suspended') {
@@ -339,7 +347,9 @@ class WebAudioSynthBank {
       return { durationMs: 250, promise: Promise.resolve() };
     }
 
-    const now = whenTime !== undefined ? Math.max(ctx.currentTime, whenTime) : ctx.currentTime;
+    const now = whenTime !== undefined 
+      ? Math.max(ctx.currentTime, whenTime) 
+      : ctx.currentTime + getTemporalJitterSec(8, 25);
     const masterGain = ctx.createGain();
     const gainScale = Math.pow(10, db / 20) * (lvl === 1 ? 0.65 : lvl === 3 ? 1.25 : 0.95);
     masterGain.gain.setValueAtTime(gainScale, now);
@@ -841,7 +851,9 @@ class WebAudioSamplerBank {
       return { durationMs: 0, promise: Promise.resolve() };
     }
 
-    const now = whenTime !== undefined ? Math.max(ctx.currentTime, whenTime) : ctx.currentTime;
+    const now = whenTime !== undefined 
+      ? Math.max(ctx.currentTime, whenTime) 
+      : ctx.currentTime + getTemporalJitterSec(8, 25);
     const source = ctx.createBufferSource();
     source.buffer = buffer;
 
@@ -1115,7 +1127,8 @@ export class EchosClient {
     const baseTime = startAudioContextTime !== undefined ? startAudioContextTime : ctx.currentTime;
 
     for (const item of plan.items) {
-      const scheduledTime = baseTime + (item.offsetMs / 1000);
+      const itemTemporalJitterSec = getTemporalJitterSec(8, 28);
+      const scheduledTime = baseTime + (item.offsetMs / 1000) + itemTemporalJitterSec;
       this.play(item.tag, item.lvl, {
         take: item.take,
         cents: item.cents,
