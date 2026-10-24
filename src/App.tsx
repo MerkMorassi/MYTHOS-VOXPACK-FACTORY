@@ -23,9 +23,11 @@ import { MoodOption, getSavedMoodId, saveMoodId, getMoodById, extractContextualP
 import { getApiAuthHeaders } from './services/apiKeyStore';
 import { SettingsModal } from './components/SettingsModal';
 import { EchosTelemetryPanel } from './components/EchosTelemetryPanel';
+import { VisionHUD } from './components/VisionHUD';
 import { echos, identifyAndStripParalinguisticTags, stripParalinguisticTags, splitLineChunks } from './services/echos';
 import { voicePreBuffer } from './services/voicePreBufferService';
 import { audioLibrary } from './services/audioLibrary';
+import { interruptionMemoryStore } from './services/interruptionMemoryStore';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
@@ -33,6 +35,11 @@ export default function App() {
   const [activePersona, setActivePersona] = useState<Persona>(() => getActivePersona());
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [conversationMomentum, setConversationMomentum] = useState<number>(1.0);
+
+  // Multi-Modal Vision Co-Presence State
+  const [isVisionActive, setIsVisionActive] = useState(false);
+  const [autoAttachVision, setAutoAttachVision] = useState(true);
+  const [latestVisionFrame, setLatestVisionFrame] = useState<string | null>(null);
   
   const [orbTheme, setOrbTheme] = useState<OrbTheme>(() => {
     return (localStorage.getItem('lila_orb_theme') as OrbTheme) || (localStorage.getItem('maya_orb_theme') as OrbTheme) || 'spectral';
@@ -424,12 +431,19 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
     const updatedMomentum = Number((conversationMomentum * 0.65 + targetScore * 0.35).toFixed(2));
     setConversationMomentum(updatedMomentum);
 
+    // Multi-modal vision co-presence: attach current camera frame if active
+    let frameToSend: string | undefined = undefined;
+    if (isVisionActive && (autoAttachVision || source === 'prompt') && latestVisionFrame) {
+      frameToSend = latestVisionFrame;
+    }
+
     const userMsg: Message = {
       id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
       role: 'user',
       content: cleanInputText || text,
       mode: activeMode,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      imagePreview: frameToSend,
     };
 
     const newMessages = [...messages, userMsg];
@@ -451,6 +465,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
     }
 
     const loreSnippets = searchLore(cleanInputText || text, 3);
+    const activeInterruption = interruptionMemoryStore.getLastInterruption();
 
     try {
       const res = await fetch('/api/chat', {
@@ -458,6 +473,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
         body: JSON.stringify({
           message: cleanInputText || text,
+          image: frameToSend,
           mode: activeMode,
           customInstructions,
           history: messages,
@@ -465,8 +481,13 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
           loreSnippets,
           mood: selectedMood,
           momentum: updatedMomentum,
+          interruptionMemory: activeInterruption,
         })
       });
+
+      if (activeInterruption) {
+        interruptionMemoryStore.clearLastInterruption();
+      }
 
       const data = await res.json();
       if (data.error) throw new Error(data.error);
@@ -609,38 +630,57 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         selectedMood={selectedMood}
         conversationMomentum={conversationMomentum}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        isVisionActive={isVisionActive}
+        onToggleVision={() => setIsVisionActive(!isVisionActive)}
       />
 
       <main className="flex-1">
         {activeTab === 'companion' && (
-          <ChatView
-            messages={messages}
-            onSendMessage={handleSendMessage}
-            isLoading={isLoading}
-            activeMode={activeMode}
-            selectedVoice={selectedVoice}
-            state={orbState}
-            onToggleListening={handleToggleListening}
-            isListening={isListening}
-            currentSpokenText={currentSpokenText}
-            orbTheme={orbTheme}
-            onChangeTheme={handleChangeTheme}
-            orbVolume={orbVolume}
-            micUnavailable={micUnavailable}
-            isVoiceSessionActive={isVoiceSessionActive}
-            onEndVoiceSession={handleEndVoiceSession}
-            onOpenVoiceStudio={() => setActiveTab('studio')}
-            activePersona={activePersona}
-            onOpenPersonaManager={() => setActiveTab('personas')}
-            sessions={sessions}
-            currentSessionId={currentSessionId}
-            onSelectSession={handleSelectSession}
-            onNewSession={handleNewSession}
-            onDeleteSession={handleDeleteSession}
-            selectedMood={selectedMood}
-            onSelectMood={handleSelectMood}
-            onOpenMoodManager={() => setActiveTab('moods')}
-          />
+          <div className="space-y-6">
+            {/* Multi-Modal Vision Co-Presence HUD overlay panel */}
+            <div className="max-w-4xl mx-auto pt-6 px-6">
+              <VisionHUD
+                isActive={isVisionActive}
+                onToggleActive={setIsVisionActive}
+                autoAttach={autoAttachVision}
+                onToggleAutoAttach={setAutoAttachVision}
+                onFrameCaptured={(dataUrl) => setLatestVisionFrame(dataUrl)}
+                onAnalyzeScene={(imageDataUrl) => {
+                  setLatestVisionFrame(imageDataUrl);
+                  handleSendMessage('Analyze my camera feed and describe what you see.', 'prompt');
+                }}
+              />
+            </div>
+
+            <ChatView
+              messages={messages}
+              onSendMessage={handleSendMessage}
+              isLoading={isLoading}
+              activeMode={activeMode}
+              selectedVoice={selectedVoice}
+              state={orbState}
+              onToggleListening={handleToggleListening}
+              isListening={isListening}
+              currentSpokenText={currentSpokenText}
+              orbTheme={orbTheme}
+              onChangeTheme={handleChangeTheme}
+              orbVolume={orbVolume}
+              micUnavailable={micUnavailable}
+              isVoiceSessionActive={isVoiceSessionActive}
+              onEndVoiceSession={handleEndVoiceSession}
+              onOpenVoiceStudio={() => setActiveTab('studio')}
+              activePersona={activePersona}
+              onOpenPersonaManager={() => setActiveTab('personas')}
+              sessions={sessions}
+              currentSessionId={currentSessionId}
+              onSelectSession={handleSelectSession}
+              onNewSession={handleNewSession}
+              onDeleteSession={handleDeleteSession}
+              selectedMood={selectedMood}
+              onSelectMood={handleSelectMood}
+              onOpenMoodManager={() => setActiveTab('moods')}
+            />
+          </div>
         )}
 
         {activeTab === 'personas' && (

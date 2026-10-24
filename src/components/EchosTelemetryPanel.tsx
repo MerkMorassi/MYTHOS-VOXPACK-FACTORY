@@ -16,6 +16,8 @@ import {
   Volume2
 } from 'lucide-react';
 import { echos, EchosEvent, EchosTag, ECHOS_VOICE_TAGS, ECHOS_EARCONS } from '../services/echos';
+import { interruptionMemoryStore, InterruptionMemory } from '../services/interruptionMemoryStore';
+import { voicePreBuffer, VoicePreBufferState } from '../services/voicePreBufferService';
 
 export const EchosTelemetryPanel: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -24,7 +26,9 @@ export const EchosTelemetryPanel: React.FC = () => {
   const [ttsPower, setTtsPower] = useState<number>(0);
   const [breathStatus, setBreathStatus] = useState<{ active: boolean; remainingMs: number }>({ active: false, remainingMs: 0 });
   const [echosState, setEchosState] = useState(echos.state);
+  const [vadState, setVadState] = useState<VoicePreBufferState>(voicePreBuffer.getState());
   const [filterTag, setFilterTag] = useState<string>('all');
+  const [interruptionMemory, setInterruptionMemory] = useState<InterruptionMemory | null>(null);
 
   const logEndRef = useRef<HTMLDivElement | null>(null);
 
@@ -42,6 +46,16 @@ export const EchosTelemetryPanel: React.FC = () => {
       setEchosState({ ...st });
     });
 
+    // Subscribe to interruption memory changes
+    const unsubscribeMemory = interruptionMemoryStore.onMemoryChange((mem) => {
+      setInterruptionMemory(mem);
+    });
+
+    // Subscribe to voicePreBuffer VAD state
+    const unsubscribeVad = voicePreBuffer.onStateChange((st) => {
+      setVadState({ ...st });
+    });
+
     // Polling interval for live WebAudio channel power & breath buffer status
     const interval = setInterval(() => {
       try {
@@ -53,6 +67,8 @@ export const EchosTelemetryPanel: React.FC = () => {
     return () => {
       unsubscribeEvents();
       unsubscribeState();
+      unsubscribeMemory();
+      unsubscribeVad();
       clearInterval(interval);
     };
   }, []);
@@ -123,6 +139,13 @@ export const EchosTelemetryPanel: React.FC = () => {
                 ECHOS Telemetry & Event Stream
                 <span className="px-2 py-0.5 rounded-full bg-violet-950 border border-violet-800 text-[10px] font-mono text-violet-300">
                   {events.length} Events
+                </span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
+                  vadState.workletActive 
+                    ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' 
+                    : 'bg-slate-800 text-slate-400'
+                }`}>
+                  {vadState.workletActive ? 'Worklet VAD Thread' : 'ScriptProcessor'}
                 </span>
               </h3>
             </div>
@@ -211,7 +234,23 @@ export const EchosTelemetryPanel: React.FC = () => {
             </div>
           </div>
 
-          {/* Quick SFX Test Fire Toolbar */}
+          {/* Interruption Memory Callout */}
+          {interruptionMemory && (
+            <div className="px-4 py-2 bg-amber-950/40 border-b border-amber-500/30 flex items-center justify-between gap-2 text-xs font-mono">
+              <div className="flex items-center gap-2 text-amber-200 min-w-0">
+                <Zap className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="truncate">
+                  Interrupted at {interruptionMemory.progressPercent}%: spoken "{interruptionMemory.spokenPart}" | unspoken "{interruptionMemory.unspokenPart}"
+                </span>
+              </div>
+              <button
+                onClick={() => interruptionMemoryStore.clearLastInterruption()}
+                className="text-[10px] text-amber-400 hover:text-amber-200 shrink-0 underline"
+              >
+                Clear Memory
+              </button>
+            </div>
+          )}
           <div className="px-4 py-2 bg-slate-900/30 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto text-[11px] shrink-0 scrollbar-none">
             <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider shrink-0 mr-1">Test Fire:</span>
             {['sigh', 'breath', 'hum', 'gasp', 'laugh', 'floor_want', 'floor_yield'].map((tag) => (

@@ -1,8 +1,8 @@
 /**
  * VoicePreBufferService
  * Maintains a high-fidelity rolling buffer of the last 500ms of microphone audio.
- * Ensures that when a voice interaction is triggered, we have the preceding audio 
- * context available to prevent clipping or lost initial syllables.
+ * Uses a dedicated WebAudio AudioWorkletNode (with ScriptProcessor fallback) running 
+ * in a background audio thread for zero-latency audio capture and VAD RMS power calculation.
  * 
  * Includes Voice Activity Detection (VAD) volume thresholding to automatically
  * trigger `echos.play('floor_want')` and halt assistant audio as soon as user 
@@ -15,6 +15,7 @@ import { stopCurrentAudio, getActiveAudioElement } from './voiceCloneService';
 export interface VoicePreBufferState {
   isActive: boolean;
   isReady: boolean;
+  workletActive: boolean;
   error: string | null;
   vadEnabled: boolean;
   vadThreshold: number;
@@ -33,6 +34,7 @@ class VoicePreBufferService {
   private audioContext: AudioContext | null = null;
   private stream: MediaStream | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private processor: ScriptProcessorNode | null = null;
   
   // Rolling buffer: 500ms at 44.1kHz or 48kHz
@@ -56,6 +58,7 @@ class VoicePreBufferService {
   private state: VoicePreBufferState = {
     isActive: false,
     isReady: false,
+    workletActive: false,
     error: null,
     vadEnabled: true,
     vadThreshold: 0.035,
@@ -120,7 +123,7 @@ class VoicePreBufferService {
     this.lastInterruptionTime = now;
     this.updateState({ lastInterruptionTime: now });
 
-    stopCurrentAudio();
+    stopCurrentAudio(source);
     echos.play('floor_want', 2, { mode: 'gap' });
 
     const ev: InterruptionEvent = {
@@ -141,7 +144,46 @@ class VoicePreBufferService {
   }
 
   /**
-   * Initialize and start the background capture & VAD monitoring
+   * High-level frame processing handler called by both AudioWorklet and ScriptProcessor fallback
+   */
+  private handleAudioFrame(inputData: Float32Array, rms: number) {
+    if (!this.audioBuffer) return;
+
+    // 1. Write to rolling 500ms pre-buffer
+    for (let i = 0; i < inputData.length; i++) {
+      this.audioBuffer[this.writePointer] = inputData[i];
+      this.writePointer = (this.writePointer + 1) % this.bufferSize;
+    }
+
+    this.currentRms = rms;
+
+    // 2. Compute RMS volume for Voice Activity Detection (VAD)
+    const isAboveThreshold = rms >= this.vadThreshold;
+    if (isAboveThreshold) {
+      this.consecutiveSpeechFrames++;
+    } else {
+      this.consecutiveSpeechFrames = Math.max(0, this.consecutiveSpeechFrames - 1);
+    }
+
+    const speechDetected = this.consecutiveSpeechFrames >= this.requiredSpeechFrames;
+    if (speechDetected !== this.isSpeechDetected) {
+      this.isSpeechDetected = speechDetected;
+      this.updateState({ isSpeechDetected: speechDetected, currentRms: rms });
+    }
+
+    // 3. VAD-Driven Automated Interruption Check
+    if (this.vadEnabled && speechDetected) {
+      const now = Date.now();
+      if (now - this.lastInterruptionTime > this.vadDebounceMs) {
+        if (this.checkIsAssistantSpeaking()) {
+          this.triggerInterruption('vad');
+        }
+      }
+    }
+  }
+
+  /**
+   * Initialize and start background capture with threaded AudioWorklet Node
    */
   async start() {
     if (this.state.isActive) return;
@@ -150,62 +192,90 @@ class VoicePreBufferService {
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       
-      // 500ms buffer
+      // 500ms rolling buffer size
       this.bufferSize = Math.floor(this.audioContext.sampleRate * 0.5);
       this.audioBuffer = new Float32Array(this.bufferSize);
       this.writePointer = 0;
 
       this.source = this.audioContext.createMediaStreamSource(this.stream);
-      
-      // Using ScriptProcessorNode for simplicity and compatibility in this environment
-      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
-      
-      this.processor.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        if (!this.audioBuffer) return;
 
-        // 1. Write to rolling pre-buffer
-        for (let i = 0; i < inputData.length; i++) {
-          this.audioBuffer[this.writePointer] = inputData[i];
-          this.writePointer = (this.writePointer + 1) % this.bufferSize;
-        }
+      let workletLoaded = false;
 
-        // 2. Compute RMS volume for Voice Activity Detection (VAD)
-        let sum = 0;
-        for (let i = 0; i < inputData.length; i++) {
-          sum += inputData[i] * inputData[i];
-        }
-        const rms = Math.sqrt(sum / inputData.length);
-        this.currentRms = rms;
-
-        const isAboveThreshold = rms >= this.vadThreshold;
-        if (isAboveThreshold) {
-          this.consecutiveSpeechFrames++;
-        } else {
-          this.consecutiveSpeechFrames = Math.max(0, this.consecutiveSpeechFrames - 1);
-        }
-
-        const speechDetected = this.consecutiveSpeechFrames >= this.requiredSpeechFrames;
-        if (speechDetected !== this.isSpeechDetected) {
-          this.isSpeechDetected = speechDetected;
-          this.updateState({ isSpeechDetected: speechDetected, currentRms: rms });
-        }
-
-        // 3. VAD-Driven Automated Interruption Check
-        if (this.vadEnabled && speechDetected) {
-          const now = Date.now();
-          if (now - this.lastInterruptionTime > this.vadDebounceMs) {
-            if (this.checkIsAssistantSpeaking()) {
-              this.triggerInterruption('vad');
+      // 1. Attempt AudioWorklet thread initialization
+      if (this.audioContext.audioWorklet) {
+        try {
+          const workletCode = `
+            class VadPreBufferProcessor extends AudioWorkletProcessor {
+              process(inputs, outputs, parameters) {
+                const input = inputs[0];
+                if (input && input.length > 0) {
+                  const inputChannel = input[0];
+                  if (inputChannel && inputChannel.length > 0) {
+                    let sum = 0;
+                    for (let i = 0; i < inputChannel.length; i++) {
+                      sum += inputChannel[i] * inputChannel[i];
+                    }
+                    const rms = Math.sqrt(sum / inputChannel.length);
+                    this.port.postMessage({
+                      samples: inputChannel,
+                      rms: rms
+                    });
+                  }
+                }
+                return true;
+              }
             }
-          }
+            registerProcessor('vad-prebuffer-processor', VadPreBufferProcessor);
+          `;
+
+          const blob = new Blob([workletCode], { type: 'application/javascript' });
+          const workletUrl = URL.createObjectURL(blob);
+          await this.audioContext.audioWorklet.addModule(workletUrl);
+          URL.revokeObjectURL(workletUrl);
+
+          this.workletNode = new AudioWorkletNode(this.audioContext, 'vad-prebuffer-processor');
+          this.workletNode.port.onmessage = (e) => {
+            if (e.data && e.data.samples) {
+              this.handleAudioFrame(new Float32Array(e.data.samples), e.data.rms || 0);
+            }
+          };
+
+          this.source.connect(this.workletNode);
+          const dummyGain = this.audioContext.createGain();
+          dummyGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+          this.workletNode.connect(dummyGain);
+          dummyGain.connect(this.audioContext.destination);
+
+          workletLoaded = true;
+          console.info('[VoicePreBuffer] AudioWorklet VAD thread initialized successfully.');
+        } catch (workletErr) {
+          console.warn('[VoicePreBuffer] AudioWorklet failed, falling back to ScriptProcessor:', workletErr);
         }
-      };
+      }
 
-      this.source.connect(this.processor);
-      this.processor.connect(this.audioContext.destination);
+      // 2. Fallback to ScriptProcessorNode if AudioWorklet fails or is unsupported
+      if (!workletLoaded) {
+        this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+        this.processor.onaudioprocess = (e) => {
+          const inputData = e.inputBuffer.getChannelData(0);
+          let sum = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            sum += inputData[i] * inputData[i];
+          }
+          const rms = Math.sqrt(sum / inputData.length);
+          this.handleAudioFrame(inputData, rms);
+        };
 
-      this.updateState({ isActive: true, isReady: true, error: null });
+        this.source.connect(this.processor);
+        this.processor.connect(this.audioContext.destination);
+      }
+
+      this.updateState({
+        isActive: true,
+        isReady: true,
+        workletActive: workletLoaded,
+        error: null,
+      });
     } catch (err: any) {
       console.error('VoicePreBuffer start error:', err);
       this.updateState({ isActive: false, isReady: false, error: err.message });
@@ -216,12 +286,23 @@ class VoicePreBufferService {
    * Stop background capture and release resources
    */
   stop() {
+    if (this.workletNode) {
+      try {
+        this.workletNode.port.onmessage = null;
+        this.workletNode.disconnect();
+      } catch (_) {}
+      this.workletNode = null;
+    }
     if (this.processor) {
-      this.processor.disconnect();
+      try {
+        this.processor.disconnect();
+      } catch (_) {}
       this.processor = null;
     }
     if (this.source) {
-      this.source.disconnect();
+      try {
+        this.source.disconnect();
+      } catch (_) {}
       this.source = null;
     }
     if (this.stream) {
@@ -236,7 +317,7 @@ class VoicePreBufferService {
     this.audioBuffer = null;
     this.consecutiveSpeechFrames = 0;
     this.isSpeechDetected = false;
-    this.updateState({ isActive: false, isReady: false, isSpeechDetected: false });
+    this.updateState({ isActive: false, isReady: false, workletActive: false, isSpeechDetected: false });
   }
 
   /**
@@ -262,4 +343,3 @@ class VoicePreBufferService {
 }
 
 export const voicePreBuffer = new VoicePreBufferService();
-

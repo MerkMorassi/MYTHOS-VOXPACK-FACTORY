@@ -53,6 +53,7 @@ export interface Message {
   moodTag?: string;
   moodLabel?: string;
   voxLine?: any;
+  imagePreview?: string;
 }
 
 interface ChatViewProps {
@@ -928,6 +929,14 @@ export const ChatView: React.FC<ChatViewProps> = ({
                         : 'bg-violet-600 text-white shadow-lg shadow-violet-600/20'
                     }`}
                   >
+                    {msg.imagePreview && (
+                      <div className="mb-2.5 rounded-xl overflow-hidden border border-white/20 max-w-xs shadow-md">
+                        <img src={msg.imagePreview} alt="Captured camera scene" className="w-full h-auto object-cover" />
+                        <span className="block text-[9px] font-mono px-2 py-0.5 bg-slate-950/80 text-violet-300">
+                          Eye of Lila Vision Frame
+                        </span>
+                      </div>
+                    )}
                     <p className="whitespace-pre-wrap">{msg.content}</p>
 
                     {isAssistant && (

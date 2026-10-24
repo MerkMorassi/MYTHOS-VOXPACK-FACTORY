@@ -327,11 +327,80 @@ export function getDefaultProfiles(): VoiceProfile[] {
   ];
 }
 
+import { interruptionMemoryStore } from './interruptionMemoryStore';
+
+let activePlaybackText = '';
+let activePlaybackStartTime = 0;
+let activePlaybackEstimatedDurationSec = 0;
+
+function recordInterruptionMemory(fullText: string, ratio: number, source: 'vad' | 'manual') {
+  if (!fullText || fullText.length < 5) return;
+
+  const targetIndex = Math.floor(fullText.length * ratio);
+  
+  // Find nearest space boundary
+  let splitIndex = targetIndex;
+  const leftSpace = fullText.lastIndexOf(' ', targetIndex);
+  const rightSpace = fullText.indexOf(' ', targetIndex);
+
+  if (leftSpace !== -1 && (targetIndex - leftSpace < 15 || rightSpace === -1)) {
+    splitIndex = leftSpace;
+  } else if (rightSpace !== -1) {
+    splitIndex = rightSpace;
+  }
+
+  const spokenPart = fullText.slice(0, splitIndex).trim();
+  const unspokenPart = fullText.slice(splitIndex).trim();
+
+  if (spokenPart.length > 0 && unspokenPart.length > 0) {
+    interruptionMemoryStore.setLastInterruption({
+      id: 'int_' + Date.now(),
+      fullResponse: fullText,
+      spokenPart,
+      unspokenPart,
+      progressPercent: Math.round(ratio * 100),
+      timestamp: Date.now(),
+      source,
+    });
+  }
+}
+
 /**
- * Hard stop of any active audio or speech synthesis
+ * Hard stop of any active audio or speech synthesis with interruption boundary tracking
  */
-export function stopCurrentAudio() {
+export function stopCurrentAudio(source: 'vad' | 'manual' = 'manual') {
   currentPlaybackSessionId++;
+
+  // Capture interruption boundary before clearing active audio element
+  if (activeAudioElement && !activeAudioElement.paused && activePlaybackText) {
+    try {
+      const currentTime = activeAudioElement.currentTime || 0;
+      const duration = activeAudioElement.duration || activePlaybackEstimatedDurationSec || 1.0;
+      
+      if (currentTime > 0.2 && duration > 0.4) {
+        const ratio = Math.min(0.98, Math.max(0.02, currentTime / duration));
+        recordInterruptionMemory(activePlaybackText, ratio, source);
+      }
+    } catch (err) {
+      console.warn('Could not record audio interruption memory:', err);
+    }
+  } else if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking && activePlaybackText) {
+    try {
+      const elapsedSec = (Date.now() - activePlaybackStartTime) / 1000;
+      const durationSec = activePlaybackEstimatedDurationSec || 2.0;
+      if (elapsedSec > 0.3) {
+        const ratio = Math.min(0.98, Math.max(0.02, elapsedSec / durationSec));
+        recordInterruptionMemory(activePlaybackText, ratio, source);
+      }
+    } catch (err) {
+      console.warn('Could not record synth interruption memory:', err);
+    }
+  }
+
+  activePlaybackText = '';
+  activePlaybackStartTime = 0;
+  activePlaybackEstimatedDurationSec = 0;
+
   if (activeAudioElement) {
     try {
       activeAudioElement.pause();
@@ -373,6 +442,106 @@ export async function waitForBreathBuffer(maxWaitMs: number = 600): Promise<bool
   return echos.waitForBreathBuffer(maxWaitMs);
 }
 
+class SubUtteranceAudioQueue {
+  private queue: Array<{ audio: HTMLAudioElement; clauseText: string }> = [];
+  private isPlaying = false;
+  private currentAudio: HTMLAudioElement | null = null;
+  private thisSessionId: number;
+  private onEnd?: () => void;
+  private echosPlanHandled = false;
+  private echosPlan: any;
+  private isFinished = false;
+
+  constructor(sessionId: number, echosPlan: any, onEnd?: () => void) {
+    this.thisSessionId = sessionId;
+    this.echosPlan = echosPlan;
+    this.onEnd = onEnd;
+  }
+
+  enqueue(audioBase64: string, clauseText: string) {
+    const audioSrc = `data:audio/wav;base64,${audioBase64}`;
+    const audio = new Audio(audioSrc);
+    this.queue.push({ audio, clauseText });
+    this.playNext();
+  }
+
+  async playNext() {
+    if (this.isPlaying || this.queue.length === 0) return;
+    if (currentPlaybackSessionId !== this.thisSessionId) return;
+
+    this.isPlaying = true;
+    const item = this.queue.shift()!;
+    this.currentAudio = item.audio;
+    activeAudioElement = item.audio;
+
+    echos.connectAssistantAudio(item.audio);
+
+    if (!this.echosPlanHandled && this.echosPlan?.items?.length > 0) {
+      this.echosPlanHandled = true;
+      const audioContextStart = echos.getAudioContextTime();
+      echos.schedulePlan(this.echosPlan, audioContextStart);
+    }
+
+    item.audio.onended = () => {
+      this.isPlaying = false;
+      this.currentAudio = null;
+      if (activeAudioElement === item.audio) {
+        activeAudioElement = null;
+      }
+      if (this.queue.length > 0) {
+        this.playNext();
+      } else if (this.isFinished) {
+        if (this.onEnd && currentPlaybackSessionId === this.thisSessionId) {
+          this.onEnd();
+        }
+      }
+    };
+
+    item.audio.onerror = () => {
+      this.isPlaying = false;
+      this.currentAudio = null;
+      if (activeAudioElement === item.audio) {
+        activeAudioElement = null;
+      }
+      if (this.queue.length > 0) {
+        this.playNext();
+      } else if (this.isFinished) {
+        if (this.onEnd && currentPlaybackSessionId === this.thisSessionId) {
+          this.onEnd();
+        }
+      }
+    };
+
+    try {
+      await echos.waitForBreathBuffer(600);
+      if (currentPlaybackSessionId !== this.thisSessionId) return;
+
+      activePlaybackText = item.clauseText;
+      activePlaybackStartTime = Date.now();
+      activePlaybackEstimatedDurationSec = item.audio.duration || (item.clauseText.length * 0.07);
+
+      await item.audio.play();
+    } catch (err) {
+      console.warn('Chunk play error:', err);
+      this.isPlaying = false;
+      if (this.queue.length > 0) {
+        this.playNext();
+      } else if (this.isFinished && this.onEnd && currentPlaybackSessionId === this.thisSessionId) {
+        this.onEnd();
+      }
+    }
+  }
+
+  markFinished() {
+    this.isFinished = true;
+    if (!this.isPlaying && this.queue.length === 0) {
+      if (this.onEnd && currentPlaybackSessionId === this.thisSessionId) {
+        this.onEnd();
+      }
+    }
+  }
+}
+
 /**
  * Strictly synchronized voice playback to guarantee only 1 voice ever speaks at a time
  */
@@ -410,8 +579,89 @@ export async function speakWithVoiceProfile(
     }
   };
 
-  // 1. Try Neural TTS first (if not quota-exhausted)
+  // 1. Try Sub-Utterance Streaming Neural TTS first (if not quota-exhausted)
   if (!isNeuralQuotaExhausted) {
+    try {
+      const streamRes = await fetch('/api/tts-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
+        body: JSON.stringify({
+          text: textForTts,
+          voiceProfile: profile,
+          mood: effectiveMood,
+          momentum,
+        }),
+      });
+
+      if (currentPlaybackSessionId !== thisSessionId) {
+        return;
+      }
+
+      if (streamRes.ok && streamRes.body) {
+        const reader = streamRes.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let chunksReceived = 0;
+        let streamQuotaExceeded = false;
+        const audioQueue = new SubUtteranceAudioQueue(thisSessionId, echosPlan, safeEnd);
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (currentPlaybackSessionId !== thisSessionId) {
+            reader.cancel();
+            return;
+          }
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            try {
+              const payload = JSON.parse(trimmed);
+              if (payload.quotaExceeded) {
+                streamQuotaExceeded = true;
+                setNeuralQuotaExhausted(true);
+                break;
+              }
+              if (payload.audio) {
+                chunksReceived++;
+                audioQueue.enqueue(payload.audio, payload.clauseText || textForTts);
+              }
+            } catch (e) {
+              console.warn('NDJSON parse error in tts-stream:', e);
+            }
+          }
+
+          if (streamQuotaExceeded) {
+            reader.cancel();
+            break;
+          }
+        }
+
+        if (!streamQuotaExceeded && buffer.trim()) {
+          try {
+            const payload = JSON.parse(buffer.trim());
+            if (payload.audio) {
+              chunksReceived++;
+              audioQueue.enqueue(payload.audio, payload.clauseText || textForTts);
+            }
+          } catch (_) {}
+        }
+
+        audioQueue.markFinished();
+
+        if (chunksReceived > 0 && !streamQuotaExceeded) {
+          return; // Successfully streaming neural audio chunks
+        }
+      }
+    } catch (streamErr) {
+      console.warn('Streaming TTS endpoint fallback to batch/browser:', streamErr);
+    }
+
+    // Fallback to batch Neural TTS endpoint
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
@@ -472,6 +722,10 @@ export async function speakWithVoiceProfile(
             // Explicitly check breath-buffer status to ensure breath-injections never clash with synthesized word start
             await echos.waitForBreathBuffer(600);
             if (currentPlaybackSessionId !== thisSessionId) return;
+
+            activePlaybackText = textForTts;
+            activePlaybackStartTime = Date.now();
+            activePlaybackEstimatedDurationSec = audio.duration || (textForTts.length * 0.07);
 
             await audio.play();
             return; // Successfully playing neural audio, do NOT fall through
@@ -585,6 +839,10 @@ async function fallbackSpeechSynthesis(
         onEnd();
       }
     };
+
+    activePlaybackText = cleanDialogueForTTS;
+    activePlaybackStartTime = Date.now();
+    activePlaybackEstimatedDurationSec = cleanDialogueForTTS.length * 0.08;
 
     window.speechSynthesis.speak(utterance);
   } catch (err) {

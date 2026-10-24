@@ -112,7 +112,7 @@ function resolveAutomaticContextualMood(message: string, history: any[] = [], ex
 
 app.post('/api/chat', async (req, res) => {
   try {
-    const { message, mode: clientMode, customInstructions, history, voiceProfile, loreSnippets, mood, momentum } = req.body;
+    const { message, image, mode: clientMode, customInstructions, history, voiceProfile, loreSnippets, mood, momentum, interruptionMemory } = req.body;
 
     const lowerMsg = (message || '').toLowerCase();
     const roleplayKeywords = ['scene', 'play pretend', 'role', 'you are an', 'you are a', 'act as', 'character', 'script', 'questioning me'];
@@ -140,11 +140,19 @@ Ensure your vocal cadence, pitch inflection, and rhythm embody these characteris
       ? `[ACTIVE VOICE CLONE PROFILE: ${voiceProfile.name}, base: ${voiceProfile.baseVoice || 'Kore'}, pitch: ${voiceProfile.pitch}, tone: ${voiceProfile.tone}, style: ${voiceProfile.vocalStyle || 'conversational'}]` 
       : '';
 
+    const interruptionContext = interruptionMemory && interruptionMemory.unspokenPart
+      ? `[INTERRUPTED CONVERSATION CONTEXT:
+On your previous turn, the user interrupted you mid-sentence.
+What you actually managed to speak before being cut off: "${interruptionMemory.spokenPart}"
+What you were about to say when interrupted: "${interruptionMemory.unspokenPart}"
+Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying...", "Sorry, go ahead", or resuming your point), and respond to the user's new input while keeping your previous interrupted thought in mind.]`
+      : '';
+
     const loreContext = loreSnippets && loreSnippets.length > 0
       ? `[RECOVERED LORE & KNOWLEDGE:\n${loreSnippets.map((l: any) => `- ${l.title}: ${l.content}`).join('\n')}\n]`
       : '';
 
-    const fullSystemInstruction = `${autoMoodInstruction}\n\n${systemPrompt}\n\n${modeContext}\n${voiceContext}\n${loreContext}`;
+    const fullSystemInstruction = `${autoMoodInstruction}\n\n${systemPrompt}\n\n${modeContext}\n${voiceContext}\n${interruptionContext}\n${loreContext}`;
 
     // Prepare history turns ensuring correct roles and non-empty content
     const rawTurns = (history || [])
@@ -160,13 +168,26 @@ Ensure your vocal cadence, pitch inflection, and rhythm embody these characteris
       rawTurns.shift();
     }
 
+    // Build current user message parts including optional multi-modal vision co-presence image
+    const currentUserParts: any[] = [];
+    if (image && typeof image === 'string' && image.length > 50) {
+      const cleanBase64 = image.replace(/^data:image\/\w+;base64,/, '');
+      currentUserParts.push({
+        inlineData: {
+          mimeType: 'image/jpeg',
+          data: cleanBase64,
+        }
+      });
+    }
+    currentUserParts.push({ text: message || (image ? 'Observe my camera feed and describe what you see.' : '') });
+
     // Merge consecutive turns with the same role and append current user message
-    const allTurns = [...rawTurns, { role: 'user', parts: [{ text: message }] }];
-    const sanitizedContents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+    const allTurns = [...rawTurns, { role: 'user', parts: currentUserParts }];
+    const sanitizedContents: Array<{ role: string; parts: any[] }> = [];
 
     for (const turn of allTurns) {
       if (sanitizedContents.length > 0 && sanitizedContents[sanitizedContents.length - 1].role === turn.role) {
-        sanitizedContents[sanitizedContents.length - 1].parts[0].text += `\n${turn.parts[0].text}`;
+        sanitizedContents[sanitizedContents.length - 1].parts.push(...turn.parts);
       } else {
         sanitizedContents.push(turn);
       }
@@ -241,7 +262,7 @@ Ensure your vocal cadence, pitch inflection, and rhythm embody these characteris
   }
 });
 
-// Neural TTS generation using Gemini 3.8 Flash Lite TTS
+// Neural TTS generation using Gemini 3.8 Flash Lite TTS (Full Response)
 app.post('/api/tts', async (req, res) => {
   try {
     const { text, voiceProfile, mood, momentum } = req.body;
@@ -367,6 +388,104 @@ app.post('/api/tts', async (req, res) => {
     }
     console.error('TTS error:', err?.message || err);
     res.status(500).json({ error: err?.message || 'Failed to synthesize speech' });
+  }
+});
+
+// Sub-Utterance Streaming Neural TTS (Chunked Real-Time Streaming)
+app.post('/api/tts-stream', async (req, res) => {
+  try {
+    const { text, voiceProfile, mood, momentum } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: 'Text is required for TTS streaming' });
+    }
+
+    // Split text into sub-utterance clauses for sub-200ms streaming audio delivery
+    const clauses = text
+      .split(/(?<=[.!?;,])\s+/)
+      .filter((c: string) => c && c.trim().length > 0);
+
+    if (clauses.length === 0) clauses.push(text);
+
+    res.setHeader('Content-Type', 'application/x-ndjson');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const defaultMood = mood || findMoodByTag('joyful') || EXHAUSTIVE_MOODS[0];
+    const baseVoice = voiceProfile?.baseVoice || 'Kore';
+    const baseVocalStyle = voiceProfile?.vocalStyle || 'Warm, authentic, natural conversational female voice';
+    const aiClient = getGenAIClient(req);
+
+    for (let idx = 0; idx < clauses.length; idx++) {
+      const clauseText = clauses[idx];
+      const voxLine = parseVoxLine(clauseText, defaultMood);
+      const toneDesc = defaultMood.tone || defaultMood.description || defaultMood.label;
+
+      const parts = [{
+        text: clauseText,
+        speechMetadata: {
+          style: `${toneDesc}. ${baseVocalStyle}`
+        }
+      }];
+
+      let clauseAudio: string | null = null;
+      let isQuotaExceeded = false;
+
+      for (const model of ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts']) {
+        try {
+          const response = await aiClient.models.generateContent({
+            model,
+            contents: [{ role: 'user', parts }],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: baseVoice },
+                },
+              },
+            },
+          });
+          const rawBase64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+          if (rawBase64) {
+            const paceToUse = voxLine.segments[0]?.pace || { rate: 1.0, pause: 'normal', articulation: 'neutral' };
+            clauseAudio = injectMicroSilences(rawBase64, paceToUse);
+            break;
+          }
+        } catch (err: any) {
+          const isQuota = err?.status === 429 || 
+                          err?.message?.includes('429') || 
+                          err?.message?.includes('RESOURCE_EXHAUSTED') ||
+                          err?.message?.includes('Quota exceeded');
+          if (isQuota) {
+            isQuotaExceeded = true;
+            break;
+          }
+        }
+      }
+
+      if (isQuotaExceeded) {
+        res.write(JSON.stringify({ quotaExceeded: true }) + '\n');
+        break;
+      }
+
+      if (clauseAudio) {
+        res.write(JSON.stringify({
+          chunkIndex: idx,
+          totalChunks: clauses.length,
+          clauseText,
+          audio: clauseAudio,
+          isFinal: idx === clauses.length - 1,
+        }) + '\n');
+      }
+    }
+
+    res.end();
+  } catch (err: any) {
+    console.error('TTS Streaming Error:', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err?.message || 'Streaming TTS failed' });
+    } else {
+      res.end();
+    }
   }
 });
 
