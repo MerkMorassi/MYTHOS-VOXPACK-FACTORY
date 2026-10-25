@@ -1302,6 +1302,65 @@ export class EchosClient {
       }
     });
 
+    // Respiratory Cycle: automatic onset intake breath & completion exhale for long responses
+    const isLongResponse = parsed.spoken.length >= 50 || currentOffsetMs >= 3500;
+    if (isLongResponse) {
+      // 1. Onset Intake Breath: trigger if no explicit sound tag at start
+      const hasStartBreath = items.some(it => it.offsetMs <= 250 && ['breath', 'gasp', 'hum'].includes(it.tag));
+      if (!hasStartBreath) {
+        const onsetTag: EchosVoiceTag = Math.random() > 0.25 ? 'breath' : 'gasp';
+        const rrKey = `${onsetTag}:1`;
+        const lastTake = this.state.rr[rrKey];
+        const take = pickTake(onsetTag, 1, lastTake);
+        this.state.rr[rrKey] = take;
+        this.savePersistentRR();
+
+        const jitter = computeJitter();
+        const onsetDb = -18 - Math.random() * 6; // Subtle: -18dB to -24dB
+
+        items.unshift({
+          tag: onsetTag,
+          lvl: 1,
+          take,
+          cents: jitter.cents,
+          db: Math.round(onsetDb * 10) / 10,
+          mode: 'offset',
+          offsetMs: 0,
+          durationMs: onsetTag === 'breath' ? 220 : 180,
+          chunkIndex: -1,
+        });
+      }
+
+      // 2. Completion Exhale: trigger if no explicit trailing sound tag near end
+      const hasEndExhale = items.some(it => it.offsetMs >= currentOffsetMs - 400 && ['exhale', 'sigh', 'breath'].includes(it.tag));
+      if (!hasEndExhale) {
+        const completionTag: EchosVoiceTag = Math.random() > 0.3 ? 'exhale' : 'sigh';
+        const rrKey = `${completionTag}:1`;
+        const lastTake = this.state.rr[rrKey];
+        const take = pickTake(completionTag, 1, lastTake);
+        this.state.rr[rrKey] = take;
+        this.savePersistentRR();
+
+        const jitter = computeJitter();
+        const completionDb = -20 - Math.random() * 6; // Subtle: -20dB to -26dB
+
+        items.push({
+          tag: completionTag,
+          lvl: 1,
+          take,
+          cents: jitter.cents,
+          db: Math.round(completionDb * 10) / 10,
+          mode: 'offset',
+          offsetMs: Math.max(0, Math.round(currentOffsetMs + 60)),
+          durationMs: completionTag === 'exhale' ? 400 : 450,
+          chunkIndex: 999,
+        });
+      }
+    }
+
+    // Ensure items are ordered chronologically by timeline offset
+    items.sort((a, b) => a.offsetMs - b.offsetMs);
+
     const hue = ECHOS_MOODS[currentMood]?.hue ?? 215;
 
     return {

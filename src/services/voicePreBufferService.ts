@@ -43,6 +43,9 @@ class VoicePreBufferService {
   private audioBuffer: Float32Array | null = null;
   private writePointer: number = 0;
   
+  // Track created Blob URLs for explicit disposal
+  private activeObjectUrls: Set<string> = new Set();
+  
   // VAD & Interruption state
   private vadEnabled: boolean = true;
   private vadThreshold: number = 0.035; // ~ -29dB RMS threshold for speech
@@ -231,10 +234,12 @@ class VoicePreBufferService {
 
           const blob = new Blob([workletCode], { type: 'application/javascript' });
           const workletUrl = URL.createObjectURL(blob);
+          this.activeObjectUrls.add(workletUrl);
           try {
             await this.audioContext.audioWorklet.addModule(workletUrl);
           } finally {
             URL.revokeObjectURL(workletUrl);
+            this.activeObjectUrls.delete(workletUrl);
           }
 
           this.workletNode = new AudioWorkletNode(this.audioContext, 'vad-prebuffer-processor');
@@ -316,6 +321,14 @@ class VoicePreBufferService {
     if (this.audioContext) {
       this.audioContext = null;
     }
+    
+    // Revoke any pending Object URLs
+    this.activeObjectUrls.forEach(url => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (_) {}
+    });
+    this.activeObjectUrls.clear();
     
     this.audioBuffer = null;
     this.consecutiveSpeechFrames = 0;
