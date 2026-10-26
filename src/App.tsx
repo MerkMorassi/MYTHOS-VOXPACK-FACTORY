@@ -28,6 +28,8 @@ import { echos, identifyAndStripParalinguisticTags, stripParalinguisticTags, spl
 import { voicePreBuffer } from './services/voicePreBufferService';
 import { audioLibrary } from './services/audioLibrary';
 import { interruptionMemoryStore } from './services/interruptionMemoryStore';
+import { audioCacheStore } from './services/audioCacheStore';
+import { getSharedAudioContext } from './services/audioContextManager';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
@@ -105,6 +107,10 @@ Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
   const recognitionRef = useRef<any>(null);
   const latestTranscriptRef = useRef<string>('');
   const handleSendMessageRef = useRef<(text: string, source?: 'voice' | 'keyboard' | 'prompt') => Promise<void>>(async () => {});
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const animFrameRef = useRef<number | null>(null);
 
   // Initialize or restore sessions on mount
   useEffect(() => {
@@ -125,6 +131,12 @@ Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
 
     // Initialize ECHOS audio library
     audioLibrary.initializeEngine().catch(err => console.warn('ECHOS Library init failed:', err));
+
+    // Pre-warm audio cache for initial active persona
+    const ctx = echos.getContext();
+    if (ctx && activePersona?.id) {
+      audioCacheStore.prewarmPersona(activePersona.id, ctx).catch(err => console.warn('Pre-warm initial persona failed:', err));
+    }
   }, []);
 
   // Sync active persona's voice if available
@@ -217,6 +229,11 @@ Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
 
   const handlePersonaChanged = (newPersona: Persona) => {
     setActivePersona(newPersona);
+    // Pre-warm audio samples for newly selected persona to eliminate take trigger latency
+    const ctx = echos.getContext();
+    if (ctx && newPersona?.id) {
+      audioCacheStore.prewarmPersona(newPersona.id, ctx).catch(err => console.warn('Pre-warm persona failed:', err));
+    }
     // Update baseline system prompt with this Root SIA's baseline lore
     if (newPersona.baselineBeingLore) {
       const basePrompt = `You are ${newPersona.name}${newPersona.pronunciation ? ` (pronounced ${newPersona.pronunciation})` : ''}, a synthetic intelligence agent (${newPersona.designation}).
@@ -241,26 +258,222 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
     }
   };
 
-  const startListening = () => {
-    if (!recognitionRef.current) return;
-
+  // Microphone stream management
+  const requestMicrophoneStream = async (): Promise<MediaStream | null> => {
     try {
+      if (micStreamRef.current && micStreamRef.current.getAudioTracks().some(t => t.readyState === 'live')) {
+        setMicUnavailable(false);
+        return micStreamRef.current;
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      });
+      micStreamRef.current = stream;
+      setMicUnavailable(false);
+      return stream;
+    } catch (err: any) {
+      console.warn('Microphone permission request error:', err?.name || err);
+      setMicUnavailable(true);
+      return null;
+    }
+  };
+
+  const startVolumeMeter = (stream: MediaStream) => {
+    try {
+      const audioCtx = getSharedAudioContext();
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.5;
+      source.connect(analyser);
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const poll = () => {
+        if (orbStateRef.current === 'listening') {
+          analyser.getByteFrequencyData(dataArray);
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i];
+          }
+          const avg = sum / dataArray.length;
+          // Scale to 0-100 range
+          const vol = Math.min(100, Math.round((avg / 110) * 100));
+          setOrbVolume(vol);
+          animFrameRef.current = requestAnimationFrame(poll);
+        } else {
+          setOrbVolume(0);
+        }
+      };
+      animFrameRef.current = requestAnimationFrame(poll);
+    } catch (err) {
+      console.warn('Failed to start mic volume meter:', err);
+    }
+  };
+
+  const stopVolumeMeter = () => {
+    if (animFrameRef.current) {
+      cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = null;
+    }
+    setOrbVolume(0);
+  };
+
+  const startMediaRecorder = (stream: MediaStream) => {
+    try {
+      audioChunksRef.current = [];
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : MediaRecorder.isTypeSupported('audio/mp4')
+        ? 'audio/mp4'
+        : '';
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+      recorder.start(100);
+      mediaRecorderRef.current = recorder;
+    } catch (e) {
+      console.warn('MediaRecorder could not start:', e);
+    }
+  };
+
+  const startListening = async () => {
+    // 1. Explicitly prompt / verify microphone access on user gesture
+    const stream = await requestMicrophoneStream();
+    if (!stream) {
+      setIsListening(false);
+      setOrbState('idle');
+      return;
+    }
+
+    latestTranscriptRef.current = '';
+    setCurrentSpokenText('');
+    setIsListening(true);
+    setOrbState('listening');
+
+    // 2. Start live visual audio meter on the Orb
+    startVolumeMeter(stream);
+
+    // 3. Start audio recording for fallback transcription
+    startMediaRecorder(stream);
+
+    // 4. Start Web Speech API SpeechRecognition if available
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch (_) {}
+      setTimeout(() => {
+        try {
+          recognitionRef.current?.start();
+        } catch (err: any) {
+          console.warn('SpeechRecognition start warning (audio fallback will be used):', err?.message || err);
+        }
+      }, 50);
+    }
+  };
+
+  const stopListening = async (triggerSend = true) => {
+    setIsListening(false);
+    stopVolumeMeter();
+
+    // Stop SpeechRecognition
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (_) {}
+    }
+
+    // Stop MediaRecorder and grab audio blob
+    let recordedBlob: Blob | null = null;
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== 'inactive') {
+      recordedBlob = await new Promise((resolve) => {
+        recorder.onstop = () => {
+          const mime = recorder.mimeType || 'audio/webm';
+          resolve(new Blob(audioChunksRef.current, { type: mime }));
+        };
+        try {
+          recorder.stop();
+        } catch (_) {
+          resolve(null);
+        }
+      });
+    }
+
+    if (!triggerSend) {
+      setOrbState('idle');
+      return;
+    }
+
+    // Check if SpeechRecognition got text
+    const textToSend = latestTranscriptRef.current.trim();
+    if (textToSend) {
+      echos.play('floor_ack');
       latestTranscriptRef.current = '';
       setCurrentSpokenText('');
-      recognitionRef.current.abort();
-    } catch (_) {}
+      await handleSendMessageRef.current(textToSend, 'voice');
+      return;
+    }
 
-    setTimeout(() => {
+    // If Web Speech API didn't produce text (e.g. Firefox, Safari, sandboxed iframe, or silence),
+    // transcribe the captured audio chunk via Gemini multimodal API!
+    if (recordedBlob && recordedBlob.size > 2000) {
+      setOrbState('thinking');
       try {
-        latestTranscriptRef.current = '';
-        setCurrentSpokenText('');
-        recognitionRef.current.start();
-        setIsListening(true);
-        setOrbState('listening');
+        const reader = new FileReader();
+        const base64Promise = new Promise<string>((resolve) => {
+          reader.onloadend = () => {
+            const dataUrl = reader.result as string;
+            const base64 = dataUrl.split(',')[1] || '';
+            resolve(base64);
+          };
+        });
+        reader.readAsDataURL(recordedBlob);
+        const base64Data = await base64Promise;
+
+        const res = await fetch('/api/transcribe', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...getApiAuthHeaders(),
+          },
+          body: JSON.stringify({
+            audioBase64: base64Data,
+            mimeType: recordedBlob.type || 'audio/webm',
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.transcript && data.transcript.trim()) {
+            echos.play('floor_ack');
+            setCurrentSpokenText(data.transcript);
+            await handleSendMessageRef.current(data.transcript.trim(), 'voice');
+            return;
+          }
+        }
       } catch (err) {
-        console.warn('Recognition start retry:', err);
+        console.warn('Gemini audio transcription fallback error:', err);
       }
-    }, 50);
+    }
+
+    // If no speech was detected, maintain voice session or return to idle
+    if (isVoiceSessionActiveRef.current) {
+      setOrbState('idle');
+    } else {
+      setOrbState('idle');
+    }
   };
 
   useEffect(() => {
@@ -286,60 +499,34 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         };
 
         recognition.onend = () => {
-          setIsListening(false);
-          const textToSend = latestTranscriptRef.current.trim();
-          if (textToSend) {
-            echos.play('floor_ack');
-            latestTranscriptRef.current = '';
-            handleSendMessageRef.current(textToSend, 'voice');
-          } else if (isVoiceSessionActiveRef.current && orbStateRef.current === 'listening') {
-            // Silence detected; if voice session is active, keep listening for the user's turn
-            setTimeout(() => {
-              if (isVoiceSessionActiveRef.current && orbStateRef.current !== 'thinking' && orbStateRef.current !== 'speaking') {
-                startListening();
-              }
-            }, 300);
-          } else if (!isVoiceSessionActiveRef.current) {
-            setOrbState('idle');
+          if (orbStateRef.current === 'listening') {
+            stopListening(true);
           }
         };
 
         recognition.onerror = (err: any) => {
-          console.warn('Speech recognition error:', err?.error || err);
-          setIsListening(false);
-          if (err?.error === 'not-allowed' || err?.error === 'service-not-allowed') {
-            setMicUnavailable(true);
-          }
-          if (err?.error === 'no-speech' && isVoiceSessionActiveRef.current) {
-            setTimeout(() => {
-              if (isVoiceSessionActiveRef.current && orbStateRef.current !== 'thinking' && orbStateRef.current !== 'speaking') {
-                startListening();
-              }
-            }, 400);
-          } else if (!isVoiceSessionActiveRef.current) {
-            setOrbState('idle');
+          console.warn('Speech recognition status:', err?.error || err);
+          if (err?.error === 'no-speech' && orbStateRef.current === 'listening') {
+            stopListening(true);
           }
         };
 
         recognitionRef.current = recognition;
       } catch (e) {
         console.warn('Could not initialize SpeechRecognition:', e);
-        setMicUnavailable(true);
       }
-    } else {
-      setMicUnavailable(true);
     }
   }, []);
 
-  const handleToggleListening = () => {
+  const handleToggleListening = async () => {
     // If speaking, tapping orb interrupts immediately
     if (orbState === 'speaking') {
       echos.play('floor_want');
-      stopCurrentAudio();
+      stopCurrentAudio('manual');
       setOrbVolume(0);
       setIsVoiceSessionActive(true);
       isVoiceSessionActiveRef.current = true;
-      startListening();
+      await startListening();
       return;
     }
 
@@ -348,23 +535,15 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       echos.play('floor_want');
       setIsVoiceSessionActive(true);
       isVoiceSessionActiveRef.current = true;
-
-      if (micUnavailable || !recognitionRef.current) {
-        handleSendMessage(`Hello ${activePersona.name}, let's start our conversation.`, 'voice');
-        return;
-      }
-
-      startListening();
+      await startListening();
       return;
     }
 
     // If session is already active:
     if (isListening) {
-      try {
-        recognitionRef.current?.stop();
-      } catch (_) {}
+      await stopListening(true);
     } else {
-      startListening();
+      await startListening();
     }
   };
 
@@ -372,10 +551,11 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
     setIsVoiceSessionActive(false);
     isVoiceSessionActiveRef.current = false;
     stopCurrentAudio();
-    try {
-      recognitionRef.current?.abort();
-    } catch (_) {}
-    setIsListening(false);
+    stopListening(false);
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach(t => t.stop());
+      micStreamRef.current = null;
+    }
     setOrbState('idle');
     setOrbVolume(0);
     setCurrentSpokenText('');

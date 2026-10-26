@@ -58,8 +58,11 @@ import { getApiAuthHeaders } from './apiKeyStore';
 import { injectMicroSilences } from './audioProcessor';
 import { echos, prepareMessageForTTS, stripParalinguisticTags, paceEngine, injectSemanticProsodyTags } from './echos';
 import { decodeAudioDataShared } from './audioContextManager';
+import { attachProsodyEnvelope, ActiveModulationController } from './dynamicProsodyModulator';
+import { audioCacheStore } from './audioCacheStore';
 
 let activeAudioElement: HTMLAudioElement | null = null;
+let activeAudioBufferSource: AudioBufferSourceNode | null = null;
 let isNeuralQuotaExhausted = (() => {
   if (typeof localStorage === 'undefined') return false;
   const stored = localStorage.getItem('lila_neural_quota_exhausted');
@@ -384,6 +387,16 @@ export function stopCurrentAudio(source: 'vad' | 'manual' = 'manual') {
     } catch (err) {
       console.warn('Could not record audio interruption memory:', err);
     }
+  } else if (activeAudioBufferSource && activePlaybackText && activePlaybackEstimatedDurationSec > 0.4) {
+    try {
+      const elapsedSec = (Date.now() - activePlaybackStartTime) / 1000;
+      if (elapsedSec > 0.2) {
+        const ratio = Math.min(0.98, Math.max(0.02, elapsedSec / activePlaybackEstimatedDurationSec));
+        recordInterruptionMemory(activePlaybackText, ratio, source);
+      }
+    } catch (err) {
+      console.warn('Could not record buffer source interruption memory:', err);
+    }
   } else if (typeof window !== 'undefined' && 'speechSynthesis' in window && window.speechSynthesis.speaking && activePlaybackText) {
     try {
       const elapsedSec = (Date.now() - activePlaybackStartTime) / 1000;
@@ -400,6 +413,14 @@ export function stopCurrentAudio(source: 'vad' | 'manual' = 'manual') {
   activePlaybackText = '';
   activePlaybackStartTime = 0;
   activePlaybackEstimatedDurationSec = 0;
+
+  if (activeAudioBufferSource) {
+    try {
+      activeAudioBufferSource.stop();
+      activeAudioBufferSource.disconnect();
+    } catch (_) {}
+    activeAudioBufferSource = null;
+  }
 
   if (activeAudioElement) {
     try {
@@ -451,11 +472,22 @@ class SubUtteranceAudioQueue {
   private echosPlanHandled = false;
   private echosPlan: any;
   private isFinished = false;
+  private momentum: number;
+  private baseRate: number;
+  private activeController: ActiveModulationController | null = null;
 
-  constructor(sessionId: number, echosPlan: any, onEnd?: () => void) {
+  constructor(
+    sessionId: number, 
+    echosPlan: any, 
+    onEnd?: () => void,
+    momentum: number = 1.0,
+    baseRate: number = 1.0
+  ) {
     this.thisSessionId = sessionId;
     this.echosPlan = echosPlan;
     this.onEnd = onEnd;
+    this.momentum = momentum;
+    this.baseRate = baseRate;
   }
 
   enqueue(audioBase64: string, clauseText: string) {
@@ -483,6 +515,10 @@ class SubUtteranceAudioQueue {
     }
 
     item.audio.onended = () => {
+      if (this.activeController) {
+        this.activeController.stop();
+        this.activeController = null;
+      }
       this.isPlaying = false;
       this.currentAudio = null;
       if (activeAudioElement === item.audio) {
@@ -498,6 +534,10 @@ class SubUtteranceAudioQueue {
     };
 
     item.audio.onerror = () => {
+      if (this.activeController) {
+        this.activeController.stop();
+        this.activeController = null;
+      }
       this.isPlaying = false;
       this.currentAudio = null;
       if (activeAudioElement === item.audio) {
@@ -520,9 +560,21 @@ class SubUtteranceAudioQueue {
       activePlaybackStartTime = Date.now();
       activePlaybackEstimatedDurationSec = item.audio.duration || (item.clauseText.length * 0.07);
 
+      // Attach dynamic real-time phrasing velocity envelope
+      this.activeController = attachProsodyEnvelope(item.audio, {
+        enabled: true,
+        momentum: this.momentum,
+        baseRate: this.baseRate,
+        clauseText: item.clauseText,
+      });
+
       await item.audio.play();
     } catch (err) {
       console.warn('Chunk play error:', err);
+      if (this.activeController) {
+        this.activeController.stop();
+        this.activeController = null;
+      }
       this.isPlaying = false;
       if (this.queue.length > 0) {
         this.playNext();
@@ -584,6 +636,57 @@ export async function speakWithVoiceProfile(
     }
   };
 
+  // 0. IndexedDB / In-Memory AudioBuffer Cache Check (Pre-Warmed or Replayed Take)
+  const profileKey = (profile.id || profile.name || 'default').toLowerCase().replace(/\s+/g, '_');
+  const normalizedTextKey = textForTts.trim().toLowerCase().replace(/[^\w\s]/g, '').slice(0, 100);
+  const moodTag = effectiveMood?.tag ? `_${effectiveMood.tag.toLowerCase()}` : '';
+  const phraseCacheKey = `tts_${profileKey}${moodTag}_${encodeURIComponent(normalizedTextKey)}`;
+
+  const ctx = echos.getContext();
+  if (ctx) {
+    try {
+      const cachedBuffer = await audioCacheStore.getCachedAudioBuffer(ctx, phraseCacheKey);
+      if (cachedBuffer && currentPlaybackSessionId === thisSessionId) {
+        await echos.waitForBreathBuffer(600);
+        if (currentPlaybackSessionId !== thisSessionId) return;
+
+        activePlaybackText = textForTts;
+        activePlaybackStartTime = Date.now();
+        activePlaybackEstimatedDurationSec = cachedBuffer.duration;
+
+        const bufferSource = ctx.createBufferSource();
+        bufferSource.buffer = cachedBuffer;
+        bufferSource.playbackRate.value = profile.rate || 1.0;
+
+        const ttsGain = echos.getTTSGain();
+        if (ttsGain) {
+          bufferSource.connect(ttsGain);
+        } else {
+          bufferSource.connect(ctx.destination);
+        }
+
+        activeAudioBufferSource = bufferSource;
+
+        if (echosPlan.items.length > 0) {
+          const audioContextStart = echos.getAudioContextTime();
+          echos.schedulePlan(echosPlan, audioContextStart);
+        }
+
+        bufferSource.onended = () => {
+          if (activeAudioBufferSource === bufferSource) {
+            activeAudioBufferSource = null;
+          }
+          safeEnd();
+        };
+
+        bufferSource.start();
+        return; // Successfully retrieved and played from cache! Zero network synthesis latency.
+      }
+    } catch (cacheErr) {
+      console.warn('[AudioCacheStore] Cache check error, proceeding to remote synthesis:', cacheErr);
+    }
+  }
+
   // 1. Try Sub-Utterance Streaming Neural TTS first (if not quota-exhausted)
   if (!isNeuralQuotaExhausted) {
     try {
@@ -608,7 +711,13 @@ export async function speakWithVoiceProfile(
         let buffer = '';
         let chunksReceived = 0;
         let streamQuotaExceeded = false;
-        const audioQueue = new SubUtteranceAudioQueue(thisSessionId, echosPlan, safeEnd);
+        const audioQueue = new SubUtteranceAudioQueue(
+          thisSessionId, 
+          echosPlan, 
+          safeEnd, 
+          momentum || 1.0, 
+          profile.rate || 1.0
+        );
 
         while (true) {
           const { done, value } = await reader.read();
@@ -690,6 +799,24 @@ export async function speakWithVoiceProfile(
           setNeuralQuotaExhausted(true);
           console.info('Neural voice quota reached, switching seamlessly to browser speech synthesis.');
         } else if (data.audio && typeof data.audio === 'string' && data.audio.length > 50) {
+          // Asynchronously persist rendered AudioBuffer into IndexedDB cache for future instant re-use
+          if (ctx && data.audio) {
+            try {
+              const binary = atob(data.audio);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+              }
+              decodeAudioDataShared(bytes.buffer).then(decodedBuf => {
+                audioCacheStore.storeDecodedPcm(phraseCacheKey, decodedBuf, profile.id || profile.name);
+              }).catch(err => {
+                console.warn('[AudioCacheStore] Async cache decode error:', err);
+              });
+            } catch (cacheSaveErr) {
+              console.warn('[AudioCacheStore] Async cache save error:', cacheSaveErr);
+            }
+          }
+
           // Prepend synthetic micro-silences for natural human inhalation before playback starts
           const paceToUse = effectiveMood?.pace || { rate: 1.0, pause: 'normal', articulation: 'neutral' };
           const processedAudio = injectMicroSilences(data.audio, paceToUse);
@@ -706,7 +833,15 @@ export async function speakWithVoiceProfile(
             echos.schedulePlan(echosPlan, audioContextStart);
           }
 
+          const singleProsodyController = attachProsodyEnvelope(audio, {
+            enabled: true,
+            momentum: momentum || 1.0,
+            baseRate: profile.rate || 1.0,
+            clauseText: textForTts,
+          });
+
           audio.onended = () => {
+            singleProsodyController.stop();
             if (activeAudioElement === audio) {
               activeAudioElement = null;
             }
@@ -714,6 +849,7 @@ export async function speakWithVoiceProfile(
           };
 
           audio.onerror = () => {
+            singleProsodyController.stop();
             if (activeAudioElement === audio) {
               activeAudioElement = null;
             }

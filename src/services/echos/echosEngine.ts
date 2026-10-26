@@ -3,6 +3,7 @@
 
 import { getSharedAudioContext } from '../audioContextManager';
 import { spatialAcoustic } from '../spatialAcousticEngine';
+import { audioCacheStore } from '../audioCacheStore';
 
 export type EchosVoiceTag = 
   | 'hum' 
@@ -820,19 +821,39 @@ class WebAudioSamplerBank {
 
   constructor(private getContextFn: () => AudioContext | null) {}
 
-  async loadSample(tag: string, lvl: number, take: number, url: string): Promise<void> {
+  setBuffer(key: string, buffer: AudioBuffer): void {
+    this.buffers.set(key, buffer);
+  }
+
+  async loadSample(tag: string, lvl: number, take: number, url: string, personaId?: string): Promise<void> {
     const ctx = this.getContextFn();
     if (!ctx) return;
 
     const key = `${tag}:${lvl}:${take}`;
     if (this.buffers.has(key)) return;
 
+    // Check IndexedDB persistent cache first (AudioBuffer Pre-Warming layer)
+    try {
+      const cached = await audioCacheStore.getCachedAudioBuffer(ctx, key);
+      if (cached) {
+        this.buffers.set(key, cached);
+        return;
+      }
+    } catch {
+      // Fallback to network fetch
+    }
+
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const arrayBuffer = await response.arrayBuffer();
+      const copyForStore = arrayBuffer.slice(0);
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
       this.buffers.set(key, audioBuffer);
+
+      // Persist into IndexedDB (direct PCM for 0ms decode next time + raw binary)
+      audioCacheStore.storeDecodedPcm(key, audioBuffer, personaId).catch(() => {});
+      audioCacheStore.storeSampleBinary(key, copyForStore, { tag, lvl, take, personaId }).catch(() => {});
     } catch (e) {
       console.warn(`[ECHOS] Failed to load sample ${key} from ${url}:`, e);
     }
@@ -1022,8 +1043,12 @@ export class EchosClient {
     }
   }
 
-  async loadSample(tag: string, lvl: number, take: number, url: string): Promise<void> {
-    await this.samplerBank.loadSample(tag, lvl, take, url);
+  getContext(): AudioContext | null {
+    return this.synthBank.getContext();
+  }
+
+  async loadSample(tag: string, lvl: number, take: number, url: string, personaId?: string): Promise<void> {
+    await this.samplerBank.loadSample(tag, lvl, take, url, personaId);
   }
 
   /**
@@ -1241,6 +1266,13 @@ export class EchosClient {
    */
   connectAssistantAudio(element: HTMLMediaElement): void {
     this.synthBank.connectAssistantAudio(element);
+  }
+
+  /**
+   * Returns the TTS GainNode for connecting Web Audio buffer sources directly.
+   */
+  getTTSGain(): GainNode | null {
+    return this.synthBank.getTTSGain();
   }
 
   /**

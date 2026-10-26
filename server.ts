@@ -556,6 +556,41 @@ Return strictly a JSON object:
   }
 });
 
+// Transcribe audio using Gemini multimodal capabilities (speech-to-text fallback for all browsers)
+app.post('/api/transcribe', async (req, res) => {
+  try {
+    const { audioBase64, mimeType } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'Audio data is required' });
+    }
+    const aiClient = getGenAIClient(req);
+    const response = await aiClient.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              inlineData: {
+                mimeType: mimeType || 'audio/webm',
+                data: audioBase64,
+              },
+            },
+            {
+              text: 'Listen carefully to this user microphone audio and provide an exact, accurate verbatim transcription of what the speaker said. Do not include introductory notes, timestamps, explanations, or quotes. Output strictly the spoken words. If no speech is intelligible or only background noise, return an empty string.',
+            },
+          ],
+        },
+      ],
+    });
+    const transcript = (response.text || '').trim();
+    res.json({ transcript });
+  } catch (err: any) {
+    console.error('Transcription error:', err);
+    res.status(500).json({ error: err.message || 'Transcription failed' });
+  }
+});
+
 app.post('/api/extract-lore', async (req, res) => {
   try {
     const { transcript } = req.body;

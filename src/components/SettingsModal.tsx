@@ -16,7 +16,10 @@ import {
   Volume2,
   Radio,
   Layers,
-  Sparkles
+  Sparkles,
+  Database,
+  Zap,
+  HardDrive
 } from 'lucide-react';
 import { 
   getStoredApiKey, 
@@ -31,6 +34,7 @@ import {
   AcousticConfig,
   SidechainStatus 
 } from '../services/spatialAcousticEngine';
+import { audioCacheStore, CacheStats } from '../services/audioCacheStore';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -60,6 +64,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     f2Frequency: 2000,
     f3Frequency: 3400,
   });
+  const [cacheStats, setCacheStats] = useState<CacheStats>({ sampleCount: 0, pcmCount: 0, totalBytes: 0 });
+  const [isPrewarming, setIsPrewarming] = useState(false);
+  const [isClearingCache, setIsClearingCache] = useState(false);
+  const [cacheActionResult, setCacheActionResult] = useState<string | null>(null);
+
+  const loadCacheStats = async () => {
+    try {
+      const stats = await audioCacheStore.getCacheStats();
+      setCacheStats(stats);
+    } catch (e) {
+      console.warn('Failed to get cache stats:', e);
+    }
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -68,6 +85,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setAcousticConfig(spatialAcoustic.getConfig());
       setStatusMessage(null);
       checkServerStatus();
+      loadCacheStats();
 
       const unsubSidechain = spatialAcoustic.onSidechainActivity((status) => {
         setSidechainStatus(status);
@@ -77,6 +95,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       };
     }
   }, [isOpen]);
+
+  const handlePrewarmCache = async () => {
+    if (isPrewarming) return;
+    setIsPrewarming(true);
+    setCacheActionResult(null);
+    try {
+      const ctx = echos.getContext();
+      if (!ctx) throw new Error('WebAudio context unavailable');
+      const res = await audioCacheStore.prewarmAll(ctx);
+      await loadCacheStats();
+      setCacheActionResult(`Pre-warmed ${res.prewarmedCount} buffer(s) in ${res.durationMs}ms`);
+    } catch (err: any) {
+      setCacheActionResult(`Pre-warm failed: ${err?.message || 'Error'}`);
+    } finally {
+      setIsPrewarming(false);
+      setTimeout(() => setCacheActionResult(null), 4000);
+    }
+  };
+
+  const handleClearCache = async () => {
+    if (isClearingCache) return;
+    setIsClearingCache(true);
+    try {
+      await audioCacheStore.clearAllCache();
+      await loadCacheStats();
+      setCacheActionResult('Persistent cache cleared successfully');
+    } catch (err: any) {
+      setCacheActionResult(`Clear failed: ${err?.message || 'Error'}`);
+    } finally {
+      setIsClearingCache(false);
+      setTimeout(() => setCacheActionResult(null), 3500);
+    }
+  };
 
   const handleTestSidechainDucking = async () => {
     if (isTestingSidechain) return;
@@ -673,6 +724,77 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* IndexedDB AudioBuffer Pre-Warming & Persistent Take Cache */}
+        <div className="pt-4 border-t border-slate-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+              <Database className="w-3.5 h-3.5 text-cyan-400" />
+              IndexedDB AudioBuffer Pre-Warming Cache
+            </h3>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-950/80 text-cyan-400 border border-cyan-800/60 flex items-center gap-1">
+              <Zap className="w-2.5 h-2.5 text-cyan-300" /> &lt;1ms Hot Latency
+            </span>
+          </div>
+
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            Eliminates audio onset latency and decode delay during persona switching by pre-warming multi-take paralinguistic audio and storing pre-decoded Float32 PCM buffers in IndexedDB across browser sessions.
+          </p>
+
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+              <span className="text-[10px] text-slate-400 block font-semibold">Decoded PCM Buffers:</span>
+              <span className="font-mono text-cyan-300 font-bold text-sm mt-0.5 block">
+                {cacheStats.pcmCount} <span className="text-[10px] text-slate-500 font-normal">takes</span>
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+              <span className="text-[10px] text-slate-400 block font-semibold">Raw Sample Binaries:</span>
+              <span className="font-mono text-emerald-300 font-bold text-sm mt-0.5 block">
+                {cacheStats.sampleCount} <span className="text-[10px] text-slate-500 font-normal">files</span>
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-xl bg-slate-950/80 border border-slate-800/80">
+              <span className="text-[10px] text-slate-400 block font-semibold">Persistent Storage:</span>
+              <span className="font-mono text-purple-300 font-bold text-sm mt-0.5 block">
+                {(cacheStats.totalBytes / 1024).toFixed(1)} <span className="text-[10px] text-slate-500 font-normal">KB</span>
+              </span>
+            </div>
+          </div>
+
+          {cacheActionResult && (
+            <div className="p-2 rounded-lg bg-cyan-950/50 border border-cyan-800/50 text-cyan-300 text-xs font-mono flex items-center gap-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+              <span>{cacheActionResult}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-2 pt-1 flex-wrap">
+            <button
+              type="button"
+              disabled={isPrewarming}
+              onClick={handlePrewarmCache}
+              className="px-3 py-1.5 rounded-lg bg-cyan-950/70 hover:bg-cyan-900/60 disabled:opacity-40 text-cyan-300 text-[11px] font-semibold border border-cyan-800/70 flex items-center gap-1.5 transition-colors"
+              title="Pre-warm all stored audio buffers into active memory AudioBuffers"
+            >
+              <Zap className={`w-3.5 h-3.5 ${isPrewarming ? 'animate-spin text-amber-400' : 'text-cyan-400'}`} />
+              {isPrewarming ? 'Pre-Warming...' : 'Pre-Warm All Buffers'}
+            </button>
+
+            <button
+              type="button"
+              disabled={isClearingCache || (cacheStats.sampleCount === 0 && cacheStats.pcmCount === 0)}
+              onClick={handleClearCache}
+              className="px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-red-950/40 disabled:opacity-30 text-slate-400 hover:text-red-300 text-[11px] font-medium border border-slate-800 hover:border-red-800/50 flex items-center gap-1.5 transition-colors"
+              title="Clear all IndexedDB audio cache records and hot memory buffers"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              {isClearingCache ? 'Clearing...' : 'Purge Cache'}
+            </button>
           </div>
         </div>
 

@@ -29,6 +29,7 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
   orbTheme,
   onChangeTheme,
   volume,
+  micUnavailable,
   isVoiceSessionActive,
   onEndVoiceSession,
   selectedMood,
@@ -50,7 +51,12 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
       unsubEvent();
     };
   }, []);
+
   const getThemeStyles = () => {
+    if (micUnavailable) {
+      return 'from-rose-600 via-red-600 to-amber-600 shadow-rose-600/50 ring-2 ring-rose-400';
+    }
+
     switch (orbTheme) {
       case 'neon':
         if (state === 'speaking') return 'from-pink-500 via-rose-500 to-fuchsia-600 shadow-pink-500/60 ring-2 ring-pink-400';
@@ -82,9 +88,14 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
   };
 
   const getStatusText = () => {
+    if (micUnavailable) {
+      return 'Microphone permission blocked · Tap orb to allow access';
+    }
     switch (state) {
       case 'listening': 
-        return 'Listening to you... speak naturally';
+        return volume > 15 
+          ? 'Hearing your voice loud and clear... speak naturally' 
+          : 'Listening to you... speak into your microphone';
       case 'thinking': 
         return 'Lila is reflecting...';
       case 'speaking': 
@@ -99,12 +110,15 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
 
   const isBreathingSfx = activeSfxTag === 'breath' || activeSfxTag === 'exhale' || activeSfxTag === 'gasp' || activeSfxTag === 'sigh';
 
+  // Dynamic scaling driven by audio volume (user mic or assistant voice)
+  const dynamicAudioScale = 1 + (Math.min(100, Math.max(0, volume)) / 100) * 0.22;
+
   return (
     <div className="flex flex-col items-center justify-center py-8 px-4 relative">
       {/* Ambient background glow synchronized with ECHOS mood hue & breath pulse */}
       <motion.div 
         className="absolute w-72 h-72 rounded-full blur-3xl pointer-events-none transition-colors duration-700"
-        style={{ backgroundColor: `hsl(${echosState.hue}, 70%, 55%, 0.16)` }}
+        style={{ backgroundColor: micUnavailable ? 'rgba(239, 68, 68, 0.25)' : `hsl(${echosState.hue}, 70%, 55%, 0.16)` }}
         animate={{
           scale: isBreathingSfx ? [1, 1.25, 1] : (isVoiceSessionActive && state === 'idle') ? [1, 1.14, 1] : [1, 1.05, 1],
           opacity: isBreathingSfx ? [0.2, 0.45, 0.2] : (isVoiceSessionActive && state === 'idle') ? [0.18, 0.30, 0.18] : [0.12, 0.22, 0.12],
@@ -140,12 +154,12 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
         {(state === 'listening' || state === 'speaking' || isListening) && (
           <>
             <motion.div
-              className="absolute w-64 h-64 rounded-full border border-violet-500/30"
+              className={`absolute w-64 h-64 rounded-full border ${state === 'listening' ? 'border-emerald-500/40' : 'border-violet-500/30'}`}
               animate={{ scale: [1, 1.3, 1], opacity: [0.6, 0, 0.6] }}
               transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
             />
             <motion.div
-              className="absolute w-52 h-52 rounded-full border border-indigo-500/40"
+              className={`absolute w-52 h-52 rounded-full border ${state === 'listening' ? 'border-teal-500/50' : 'border-indigo-500/40'}`}
               animate={{ scale: [1, 1.2, 1], opacity: [0.8, 0.1, 0.8] }}
               transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut', delay: 0.3 }}
             />
@@ -171,14 +185,18 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
         {/* Central Orb */}
         <motion.button
           onClick={onToggleListening}
-          className={`relative w-44 h-44 rounded-full bg-gradient-to-br ${getThemeStyles()} shadow-2xl flex items-center justify-center cursor-pointer transition-transform duration-300 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-violet-500/40`}
+          className={`relative w-44 h-44 rounded-full bg-gradient-to-br ${getThemeStyles()} shadow-2xl flex items-center justify-center cursor-pointer focus:outline-none focus:ring-4 focus:ring-violet-500/40`}
+          style={{
+            transform: `scale(${state === 'speaking' || state === 'listening' ? dynamicAudioScale : 1})`,
+            transition: 'transform 0.08s ease-out',
+          }}
           animate={{
             scale: state === 'speaking' 
-              ? [1, 1.08 + (volume / 100), 1] 
+              ? [1, 1.04, 1] 
               : state === 'thinking' 
-                ? [1, 0.96, 1] 
+                ? [1, 0.95, 1] 
                 : state === 'listening' 
-                  ? [1, 1.05, 1] 
+                  ? [1, 1.04, 1] 
                   : isBreathingSfx 
                     ? [1, 1.07, 1.02, 1] 
                     : (isVoiceSessionActive && state === 'idle') 
@@ -187,7 +205,7 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
           }}
           transition={{
             duration: state === 'speaking' 
-              ? 0.2 
+              ? 0.5 
               : state === 'listening' 
                 ? 1.5 
                 : isBreathingSfx 
@@ -198,17 +216,39 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
             repeat: Infinity,
             ease: 'easeInOut'
           }}
-          title={isVoiceSessionActive ? (state === 'speaking' ? 'Tap to interrupt' : 'Tap to toggle mic') : 'Tap to start voice conversation'}
+          title={
+            micUnavailable 
+              ? 'Click to grant microphone access' 
+              : isVoiceSessionActive 
+                ? (state === 'speaking' ? 'Tap to interrupt' : 'Tap to toggle mic') 
+                : 'Tap to start voice conversation'
+          }
         >
           {/* Internal core lighting highlight */}
           <div className="absolute inset-2 rounded-full bg-gradient-to-tr from-white/20 via-transparent to-black/30 pointer-events-none"></div>
 
           {/* Icon indicator */}
           <div className="relative z-10 text-white flex flex-col items-center">
-            {state === 'speaking' ? (
-              <Volume2 className="w-12 h-12 animate-bounce" />
+            {micUnavailable ? (
+              <div className="flex flex-col items-center gap-1">
+                <MicOff className="w-12 h-12 text-rose-200" />
+                <span className="text-[10px] font-mono uppercase tracking-wider text-rose-200 bg-rose-950/80 px-2 py-0.5 rounded-full border border-rose-500/50">
+                  Allow Mic
+                </span>
+              </div>
+            ) : state === 'speaking' ? (
+              <Volume2 className="w-12 h-12 text-white animate-pulse" />
             ) : state === 'listening' || isListening ? (
-              <Mic className="w-12 h-12 animate-pulse text-emerald-200" />
+              <div className="flex flex-col items-center">
+                <Mic className={`w-12 h-12 text-emerald-200 transition-transform ${volume > 15 ? 'scale-110' : ''}`} />
+                {volume > 10 && (
+                  <span className="text-[9px] mt-0.5 font-mono text-emerald-300 font-semibold tracking-wider">
+                    LIVE
+                  </span>
+                )}
+              </div>
+            ) : state === 'thinking' ? (
+              <Sparkles className="w-12 h-12 text-amber-200 animate-spin" />
             ) : (
               <Sparkles className="w-12 h-12 text-white/90" />
             )}
@@ -265,7 +305,16 @@ export const GlowingOrb: React.FC<GlowingOrbProps> = ({
 
       {/* Voice Session Controls */}
       <div className="mt-6 flex items-center gap-3">
-        {!isVoiceSessionActive ? (
+        {micUnavailable ? (
+          <button
+            onClick={onToggleListening}
+            className="px-7 py-3 rounded-full font-medium text-sm transition-all duration-200 flex items-center gap-2.5 shadow-lg bg-rose-600 hover:bg-rose-500 text-white shadow-rose-600/30 active:scale-95 border border-rose-400"
+            title="Click to request microphone permission from your browser"
+          >
+            <Mic className="w-4 h-4" />
+            Enable Microphone Access
+          </button>
+        ) : !isVoiceSessionActive ? (
           <button
             onClick={onToggleListening}
             className="px-7 py-3 rounded-full font-medium text-sm transition-all duration-200 flex items-center gap-2.5 shadow-lg bg-violet-600 text-white shadow-violet-600/30 hover:bg-violet-500 active:scale-95"
