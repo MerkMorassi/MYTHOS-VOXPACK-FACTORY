@@ -56,7 +56,7 @@ export interface CloningProgress {
 import { MoodOption, extractContextualProsody } from './moodStore';
 import { getApiAuthHeaders } from './apiKeyStore';
 import { injectMicroSilences } from './audioProcessor';
-import { echos, prepareMessageForTTS, stripParalinguisticTags, paceEngine } from './echos';
+import { echos, prepareMessageForTTS, stripParalinguisticTags, paceEngine, injectSemanticProsodyTags } from './echos';
 import { decodeAudioDataShared } from './audioContextManager';
 
 let activeAudioElement: HTMLAudioElement | null = null;
@@ -556,10 +556,15 @@ export async function speakWithVoiceProfile(
   const { cleanText, mood: detectedMood } = extractContextualProsody(text);
   const effectiveMood = mood || detectedMood;
 
+  // Semantic Prosody Tag Auto-Injection (Pre-TTS LLM Filter):
+  // Parses assistant response and injects nonverbal sound tokens ([sigh], [gasp], [laugh], [hum], [tsk])
+  // based on sentiment, punctuation, and mood cues before TTS routing.
+  const { injectedText } = injectSemanticProsodyTags(cleanText, { moodTag: effectiveMood?.tag });
+
   // Plan ECHOS nonverbal acoustic events and extract clean spoken words
-  const echosPlan = echos.plan(cleanText);
+  const echosPlan = echos.plan(injectedText);
   // Prepare message for TTS: strip any non-verbal vocalization tags ([sigh], [hum], etc.) and route them
-  const { cleanTextForTTS: textForTts } = prepareMessageForTTS(echosPlan.spoken || cleanText);
+  const { cleanTextForTTS: textForTts } = prepareMessageForTTS(echosPlan.spoken || injectedText);
 
   // Sync ECHOS mood if plan indicates an emotion
   if (echosPlan.mood) {

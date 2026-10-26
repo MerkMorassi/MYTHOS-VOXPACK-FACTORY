@@ -7,6 +7,7 @@ import { EXHAUSTIVE_MOODS, findMoodByTag, extractContextualProsody, MoodOption }
 import { parseVoxLine } from './src/services/voxLineParser';
 import { injectMicroSilences } from './src/services/audioProcessor';
 import { paceEngine } from './src/services/echos/paceEngine';
+import { injectSemanticProsodyTags } from './src/services/echos/semanticProsodyInjector';
 
 dotenv.config();
 
@@ -228,7 +229,12 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
 
     const parsedProsody = extractContextualProsody(reply);
     const finalMood = parsedProsody.mood || autoMood;
-    const voxLine = parseVoxLine(reply, finalMood);
+    
+    // Semantic Prosody Tag Auto-Injection (Pre-TTS LLM Filter):
+    // Parses assistant response and injects nonverbal sound tokens ([sigh], [gasp], [laugh], [hum], [tsk])
+    // using sentiment and punctuation cues before routing to Neural TTS.
+    const { injectedText: enrichedReply } = injectSemanticProsodyTags(reply, { moodTag: finalMood?.tag });
+    const voxLine = parseVoxLine(enrichedReply, finalMood);
 
     // Apply conversational momentum to synthesize segments with responsive rate and articulation
     if (typeof momentum === 'number' && !isNaN(momentum)) {
@@ -243,7 +249,7 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
     }
 
     res.json({ 
-      reply: reply || "I'm listening...", 
+      reply: enrichedReply || reply || "I'm listening...", 
       detectedMode: effectiveMode,
       mood: finalMood,
       voxLine,

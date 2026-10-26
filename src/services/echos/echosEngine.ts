@@ -2,6 +2,7 @@
 // Paralinguistic vocal fillers, multi-take sampling, and turn-taking earcons
 
 import { getSharedAudioContext } from '../audioContextManager';
+import { spatialAcoustic } from '../spatialAcousticEngine';
 
 export type EchosVoiceTag = 
   | 'hum' 
@@ -148,6 +149,12 @@ export interface EchosEvent {
   clamped?: boolean;
 }
 
+export interface EchosRespiratoryConfig {
+  enabled: boolean;
+  intensity: number; // 0 to 100 (%)
+  frequency: number; // 0 to 100 (%)
+}
+
 export interface EchosState {
   mood: EchosMood;
   hue: number;
@@ -279,7 +286,7 @@ class WebAudioSynthBank {
         this.ttsAnalyserData = new Float32Array(this.ttsAnalyser.frequencyBinCount);
         
         this.ttsGain.connect(this.ttsAnalyser);
-        this.ttsAnalyser.connect(this.ctx.destination);
+        this.ttsAnalyser.connect(spatialAcoustic.getVoiceInputNode());
       } catch (err) {
         console.warn('[ECHOS] Failed to initialize shared AudioContext:', err);
       }
@@ -353,7 +360,7 @@ class WebAudioSynthBank {
     const masterGain = ctx.createGain();
     const gainScale = Math.pow(10, db / 20) * (lvl === 1 ? 0.65 : lvl === 3 ? 1.25 : 0.95);
     masterGain.gain.setValueAtTime(gainScale, now);
-    masterGain.connect(ctx.destination);
+    masterGain.connect(spatialAcoustic.getBackgroundInputNode());
 
     const pitchFactor = Math.pow(2, cents / 1200);
 
@@ -865,7 +872,7 @@ class WebAudioSamplerBank {
     gainNode.gain.setValueAtTime(gainScale, now);
 
     source.connect(gainNode);
-    gainNode.connect(ctx.destination);
+    gainNode.connect(spatialAcoustic.getBackgroundInputNode());
 
     source.start(now);
 
@@ -894,6 +901,12 @@ export class EchosClient {
   private eventLog: EchosEvent[] = [];
   private activeBreathUntil: number = 0;
 
+  private respiratoryConfig: EchosRespiratoryConfig = {
+    enabled: true,
+    intensity: 75,
+    frequency: 70,
+  };
+
   state: EchosState = {
     mood: 'neutral',
     hue: 215,
@@ -908,8 +921,48 @@ export class EchosClient {
 
   constructor() {
     this.loadPersistentRR();
+    this.loadPersistentRespiratoryConfig();
     if (typeof window !== 'undefined') {
       (window as any).MythosEchos = this;
+    }
+  }
+
+  private loadPersistentRespiratoryConfig(): void {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+    try {
+      const saved = localStorage.getItem('echos_respiratory_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          this.respiratoryConfig = {
+            enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+            intensity: typeof parsed.intensity === 'number' ? Math.max(0, Math.min(100, parsed.intensity)) : 75,
+            frequency: typeof parsed.frequency === 'number' ? Math.max(0, Math.min(100, parsed.frequency)) : 70,
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[ECHOS] Could not load persistent respiratory config:', e);
+    }
+  }
+
+  public getRespiratoryConfig(): EchosRespiratoryConfig {
+    return { ...this.respiratoryConfig };
+  }
+
+  public setRespiratoryConfig(partial: Partial<EchosRespiratoryConfig>): void {
+    this.respiratoryConfig = {
+      ...this.respiratoryConfig,
+      ...partial,
+      intensity: partial.intensity !== undefined ? Math.max(0, Math.min(100, partial.intensity)) : this.respiratoryConfig.intensity,
+      frequency: partial.frequency !== undefined ? Math.max(0, Math.min(100, partial.frequency)) : this.respiratoryConfig.frequency,
+    };
+    if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('echos_respiratory_config', JSON.stringify(this.respiratoryConfig));
+      } catch (e) {
+        console.warn('[ECHOS] Could not save persistent respiratory config:', e);
+      }
     }
   }
 
@@ -951,7 +1004,11 @@ export class EchosClient {
     if (this.idleTimer) return;
     this.idleTimer = setTimeout(() => {
       if (this.state.sessionActive && !this.state.speaking) {
-        this.play('breath', 1, { db: -15 }); // Subtle idle breath
+        if (this.respiratoryConfig.enabled && this.respiratoryConfig.intensity > 0) {
+          const intensityDbBoost = (this.respiratoryConfig.intensity - 75) * 0.28;
+          const idleDb = Math.max(-45, Math.min(-12, -16 + intensityDbBoost));
+          this.play('breath', 1, { db: idleDb });
+        }
         this.idleTimer = null;
         this.startIdleTimer();
       }
@@ -1206,6 +1263,9 @@ export class EchosClient {
     const recoveryStart = now + (durationMs / 1000) - 0.15;
     gain.gain.exponentialRampToValueAtTime(targetGain, Math.max(now + 0.11, recoveryStart));
     gain.gain.exponentialRampToValueAtTime(1.0, Math.max(now + 0.12, recoveryStart + 0.2));
+
+    // Dynamic Sub-band vocal formant notch ducking for frequency clarity
+    spatialAcoustic.triggerFormantDucking(durationMs, -14, now);
   }
 
   /**
@@ -1227,21 +1287,27 @@ export class EchosClient {
         const ellipsisRegex = /\.{2,}/g;
         let match: RegExpExecArray | null;
         while ((match = ellipsisRegex.exec(text)) !== null) {
-          // Randomized probability to inject a subtle exhale during a long pause
-          if (Math.random() > 0.35) {
+          // Respiratory frequency & enabled check
+          const shouldTriggerPauseExhale = this.respiratoryConfig.enabled && 
+            this.respiratoryConfig.frequency > 0 && 
+            this.respiratoryConfig.intensity > 0 &&
+            (Math.random() <= (this.respiratoryConfig.frequency / 100) * 0.75);
+
+          if (shouldTriggerPauseExhale) {
             const pauseOffset = currentOffsetMs + (match.index * msPerChar);
             const take = pickTake('exhale', 1, this.state.rr['exhale:1']);
             this.state.rr['exhale:1'] = take;
             this.savePersistentRR();
             const jitter = computeJitter();
-            const db = -20 + (Math.random() * 6); // Very subtle
+            const intensityDbBoost = (this.respiratoryConfig.intensity - 75) * 0.28;
+            const db = Math.max(-45, Math.min(-10, -20 + (Math.random() * 4) + intensityDbBoost));
 
             items.push({
               tag: 'exhale',
               lvl: 1,
               take,
               cents: jitter.cents,
-              db,
+              db: Math.round(db * 10) / 10,
               mode: 'offset',
               offsetMs: Math.max(0, Math.round(pauseOffset + 50)),
               durationMs: 600,
@@ -1303,58 +1369,76 @@ export class EchosClient {
     });
 
     // Respiratory Cycle: automatic onset intake breath & completion exhale for long responses
-    const isLongResponse = parsed.spoken.length >= 50 || currentOffsetMs >= 3500;
-    if (isLongResponse) {
-      // 1. Onset Intake Breath: trigger if no explicit sound tag at start
-      const hasStartBreath = items.some(it => it.offsetMs <= 250 && ['breath', 'gasp', 'hum'].includes(it.tag));
-      if (!hasStartBreath) {
-        const onsetTag: EchosVoiceTag = Math.random() > 0.25 ? 'breath' : 'gasp';
-        const rrKey = `${onsetTag}:1`;
-        const lastTake = this.state.rr[rrKey];
-        const take = pickTake(onsetTag, 1, lastTake);
-        this.state.rr[rrKey] = take;
-        this.savePersistentRR();
+    const isRespiratoryActive = this.respiratoryConfig.enabled && 
+      this.respiratoryConfig.frequency > 0 && 
+      this.respiratoryConfig.intensity > 0;
 
-        const jitter = computeJitter();
-        const onsetDb = -18 - Math.random() * 6; // Subtle: -18dB to -24dB
+    if (isRespiratoryActive) {
+      // Dynamic sensitivity thresholds scaled by user frequency:
+      // at 100% frequency -> triggers on >= 20 chars or >= 1800ms
+      // at 70% frequency (default) -> triggers on >= 48 chars or >= 3400ms
+      // at 25% frequency -> triggers on >= 90 chars or >= 6000ms
+      const minChars = Math.max(15, Math.round(115 - (this.respiratoryConfig.frequency * 0.95)));
+      const minDurationMs = Math.max(1200, Math.round(7200 - (this.respiratoryConfig.frequency * 52)));
+      const isLongResponse = parsed.spoken.length >= minChars || currentOffsetMs >= minDurationMs;
+      const freqProbability = Math.min(1.0, 0.35 + (this.respiratoryConfig.frequency / 100) * 0.65);
 
-        items.unshift({
-          tag: onsetTag,
-          lvl: 1,
-          take,
-          cents: jitter.cents,
-          db: Math.round(onsetDb * 10) / 10,
-          mode: 'offset',
-          offsetMs: 0,
-          durationMs: onsetTag === 'breath' ? 220 : 180,
-          chunkIndex: -1,
-        });
-      }
+      if (isLongResponse && Math.random() <= freqProbability) {
+        const intensityDbBoost = (this.respiratoryConfig.intensity - 75) * 0.28;
 
-      // 2. Completion Exhale: trigger if no explicit trailing sound tag near end
-      const hasEndExhale = items.some(it => it.offsetMs >= currentOffsetMs - 400 && ['exhale', 'sigh', 'breath'].includes(it.tag));
-      if (!hasEndExhale) {
-        const completionTag: EchosVoiceTag = Math.random() > 0.3 ? 'exhale' : 'sigh';
-        const rrKey = `${completionTag}:1`;
-        const lastTake = this.state.rr[rrKey];
-        const take = pickTake(completionTag, 1, lastTake);
-        this.state.rr[rrKey] = take;
-        this.savePersistentRR();
+        // 1. Onset Intake Breath: trigger if no explicit sound tag at start
+        const hasStartBreath = items.some(it => it.offsetMs <= 250 && ['breath', 'gasp', 'hum'].includes(it.tag));
+        if (!hasStartBreath) {
+          const onsetTag: EchosVoiceTag = Math.random() > 0.25 ? 'breath' : 'gasp';
+          const rrKey = `${onsetTag}:1`;
+          const lastTake = this.state.rr[rrKey];
+          const take = pickTake(onsetTag, 1, lastTake);
+          this.state.rr[rrKey] = take;
+          this.savePersistentRR();
 
-        const jitter = computeJitter();
-        const completionDb = -20 - Math.random() * 6; // Subtle: -20dB to -26dB
+          const jitter = computeJitter();
+          const baseOnsetDb = -19 - Math.random() * 5; // -19dB to -24dB baseline
+          const onsetDb = Math.max(-48, Math.min(-10, baseOnsetDb + intensityDbBoost));
 
-        items.push({
-          tag: completionTag,
-          lvl: 1,
-          take,
-          cents: jitter.cents,
-          db: Math.round(completionDb * 10) / 10,
-          mode: 'offset',
-          offsetMs: Math.max(0, Math.round(currentOffsetMs + 60)),
-          durationMs: completionTag === 'exhale' ? 400 : 450,
-          chunkIndex: 999,
-        });
+          items.unshift({
+            tag: onsetTag,
+            lvl: 1,
+            take,
+            cents: jitter.cents,
+            db: Math.round(onsetDb * 10) / 10,
+            mode: 'offset',
+            offsetMs: 0,
+            durationMs: onsetTag === 'breath' ? 220 : 180,
+            chunkIndex: -1,
+          });
+        }
+
+        // 2. Completion Exhale: trigger if no explicit trailing sound tag near end
+        const hasEndExhale = items.some(it => it.offsetMs >= currentOffsetMs - 400 && ['exhale', 'sigh', 'breath'].includes(it.tag));
+        if (!hasEndExhale) {
+          const completionTag: EchosVoiceTag = Math.random() > 0.3 ? 'exhale' : 'sigh';
+          const rrKey = `${completionTag}:1`;
+          const lastTake = this.state.rr[rrKey];
+          const take = pickTake(completionTag, 1, lastTake);
+          this.state.rr[rrKey] = take;
+          this.savePersistentRR();
+
+          const jitter = computeJitter();
+          const baseCompletionDb = -21 - Math.random() * 5; // -21dB to -26dB baseline
+          const completionDb = Math.max(-50, Math.min(-12, baseCompletionDb + intensityDbBoost));
+
+          items.push({
+            tag: completionTag,
+            lvl: 1,
+            take,
+            cents: jitter.cents,
+            db: Math.round(completionDb * 10) / 10,
+            mode: 'offset',
+            offsetMs: Math.max(0, Math.round(currentOffsetMs + 60)),
+            durationMs: completionTag === 'exhale' ? 400 : 450,
+            chunkIndex: 999,
+          });
+        }
       }
     }
 

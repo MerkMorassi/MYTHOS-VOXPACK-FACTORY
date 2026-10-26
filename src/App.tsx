@@ -24,7 +24,7 @@ import { getApiAuthHeaders } from './services/apiKeyStore';
 import { SettingsModal } from './components/SettingsModal';
 import { EchosTelemetryPanel } from './components/EchosTelemetryPanel';
 import { VisionHUD } from './components/VisionHUD';
-import { echos, identifyAndStripParalinguisticTags, stripParalinguisticTags, splitLineChunks } from './services/echos';
+import { echos, identifyAndStripParalinguisticTags, stripParalinguisticTags, splitLineChunks, injectSemanticProsodyTags } from './services/echos';
 import { voicePreBuffer } from './services/voicePreBufferService';
 import { audioLibrary } from './services/audioLibrary';
 import { interruptionMemoryStore } from './services/interruptionMemoryStore';
@@ -496,9 +496,14 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         setConversationMomentum(data.momentum);
       }
 
-      const replyContent = data.reply;
+      const rawReplyContent = data.reply || '';
       const detectedMode = data.detectedMode || activeMode;
       const detectedMood = data.mood || selectedMood;
+
+      // Semantic Prosody Tag Auto-Injection (Pre-TTS LLM Filter)
+      const { injectedText: replyContent } = injectSemanticProsodyTags(rawReplyContent, { 
+        moodTag: detectedMood?.tag || selectedMood?.tag 
+      });
 
       if (detectedMode !== activeMode) {
         setActiveMode(detectedMode);
