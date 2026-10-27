@@ -3,11 +3,12 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import { EXHAUSTIVE_MOODS, findMoodByTag, extractContextualProsody, MoodOption } from './src/services/moodStore';
+import { EXHAUSTIVE_MOODS, findMoodByTag, extractContextualProsody, MoodOption, compilePaceForGemini } from './src/services/moodStore';
 import { parseVoxLine } from './src/services/voxLineParser';
 import { injectMicroSilences } from './src/services/audioProcessor';
 import { paceEngine } from './src/services/echos/paceEngine';
 import { injectSemanticProsodyTags } from './src/services/echos/semanticProsodyInjector';
+import { prosodyMomentum, ProsodyMomentumState } from './src/services/prosodyMomentum';
 
 dotenv.config();
 
@@ -16,6 +17,40 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
+
+// Diagnostic endpoint to test and verify a Gemini API Key
+app.post('/api/verify-api-key', async (req, res) => {
+  try {
+    const keyToTest = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey || process.env.GEMINI_API_KEY || '';
+    if (!keyToTest) {
+      return res.status(400).json({ valid: false, error: 'No API key provided or configured in server environment' });
+    }
+    const testAI = new GoogleGenAI({ apiKey: keyToTest });
+    const result = await testAI.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }],
+      config: { maxOutputTokens: 5 }
+    });
+    if (result.text) {
+      return res.json({ valid: true, message: 'API Key successfully verified with Gemini API' });
+    }
+    res.status(400).json({ valid: false, error: 'Empty response received from model' });
+  } catch (err: any) {
+    console.error('API Key verification failed:', err?.message || err);
+    res.status(401).json({ valid: false, error: err?.message || 'Invalid API Key or unauthorized' });
+  }
+});
+
+// Endpoint to inspect runtime server credentials status
+app.get('/api/status', (req, res) => {
+  const hasServerEnvKey = !!process.env.GEMINI_API_KEY;
+  const clientKeyProvided = !!req.headers['x-gemini-api-key'];
+  res.json({
+    hasServerEnvKey,
+    clientKeyProvided,
+    status: 'ok',
+  });
+});
 
 const defaultApiKey = process.env.GEMINI_API_KEY || '';
 let defaultAi = new GoogleGenAI({ apiKey: defaultApiKey });
@@ -51,9 +86,9 @@ Spell out and normalize all numbers, symbols, and abbreviations into full spoken
 Use only standard English alphabet characters along with basic punctuation.
 Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
 
-function resolveAutomaticContextualMood(message: string, history: any[] = [], explicitMood?: MoodOption, currentMood?: MoodOption): { mood: MoodOption; intensity: number } {
+function resolveAutomaticContextualMood(message: string, history: any[] = [], explicitMood?: MoodOption, currentMood?: MoodOption, momentum: number = 1.0): { mood: MoodOption; intensity: number; momentum: number } {
   if (explicitMood && explicitMood.tag) {
-    return { mood: explicitMood, intensity: 0.8 };
+    return { mood: explicitMood, intensity: 0.8, momentum: momentum };
   }
 
   const textContext = `${(history || []).slice(-4).map((h: any) => h.content || '').join(' ')} ${message || ''}`.toLowerCase();
@@ -90,25 +125,23 @@ function resolveAutomaticContextualMood(message: string, history: any[] = [], ex
 
   candidates.push({ mood: findMoodByTag('earnest') || EXHAUSTIVE_MOODS[0], score: 0.5 });
   candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
 
-  let selectedMood = currentMood || best.mood;
-  let intensity = 0.6;
+  // Derive pseudo-state from current parameters to maintain smoothing without server session stores
+  const prevState = prosodyMomentum.createInitialState(currentMood?.id);
+  
+  const result = prosodyMomentum.resolveNextState(
+    message,
+    history,
+    candidates,
+    prevState,
+    momentum
+  );
 
-  if (currentMood && currentMood.id !== best.mood.id) {
-    const currentScore = candidates.find(c => c.mood.id === currentMood.id)?.score || 0.4;
-    if (best.score - currentScore > 0.25) {
-      selectedMood = best.mood;
-      intensity = Math.min(1.0, 0.6 + (best.score - currentScore));
-    } else {
-      selectedMood = currentMood;
-      intensity = 0.5 + (0.6 - 0.5) * 0.85;
-    }
-  } else {
-    intensity = Math.min(1.0, 0.5 + best.score * 0.2);
-  }
-
-  return { mood: selectedMood, intensity };
+  return { 
+    mood: result.mood, 
+    intensity: result.intensity, 
+    momentum: result.state.momentum 
+  };
 }
 
 app.post('/api/chat', async (req, res) => {
@@ -122,8 +155,9 @@ app.post('/api/chat', async (req, res) => {
     const effectiveMode = isRoleplayInvite ? 'on-stage' : clientMode;
 
     // Automatically select relevant mood tag from the 100-mood library based on conversation context
-    const resolvedAuto = resolveAutomaticContextualMood(message, history, mood);
+    const resolvedAuto = resolveAutomaticContextualMood(message, history, mood, undefined, momentum);
     const autoMood = resolvedAuto.mood;
+    const effectiveMomentum = resolvedAuto.momentum;
 
     const autoMoodInstruction = `[AUTOMATIC CONTEXTUAL PROSODY:
 Active Prosody Tag: ${autoMood.tag} (${autoMood.label})
@@ -196,31 +230,52 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
 
     const contents = sanitizedContents;
 
-    const modelsToTry = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+    const modelsToTry = [
+      'gemini-3.8-flash',
+      'gemini-3.8-flash-lite',
+      'gemini-1.5-flash'
+    ];
     let reply = '';
     let lastErr: any = null;
 
     const aiClient = getGenAIClient(req);
 
     for (const model of modelsToTry) {
-      try {
-        const response = await aiClient.models.generateContent({
-          model,
-          contents,
-          config: {
-            systemInstruction: fullSystemInstruction,
-            temperature: effectiveMode === 'on-stage' ? 0.7 : 0.9,
-            maxOutputTokens: 1024,
+      let attempts = 0;
+      const maxAttempts = model.includes('3.0') || model.includes('preview') ? 1 : 2; // Retry less on experimental/busy preview models
+      
+      while (attempts < maxAttempts) {
+        try {
+          const response = await aiClient.models.generateContent({
+            model,
+            contents,
+            config: {
+              systemInstruction: fullSystemInstruction,
+              temperature: effectiveMode === 'on-stage' ? 0.7 : 0.9,
+              maxOutputTokens: 1024,
+            }
+          });
+          if (response.text) {
+            reply = response.text;
+            break;
           }
-        });
-        if (response.text) {
-          reply = response.text;
-          break;
+        } catch (err: any) {
+          lastErr = err;
+          const is503 = err?.status === 503 || err?.message?.includes('503') || err?.message?.includes('UNAVAILABLE');
+          
+          if (is503 && attempts < maxAttempts - 1) {
+            attempts++;
+            const delay = 1000 * attempts;
+            console.log(`Model ${model} busy (503), retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          
+          console.warn(`Model ${model} failed or unavailable, trying fallback:`, err?.message || err);
+          break; // Move to next model in the list
         }
-      } catch (err: any) {
-        lastErr = err;
-        console.warn(`Model ${model} unavailable, trying fallback:`, err?.message || err);
       }
+      if (reply) break;
     }
 
     if (!reply && lastErr) {
@@ -237,12 +292,12 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
     const voxLine = parseVoxLine(enrichedReply, finalMood);
 
     // Apply conversational momentum to synthesize segments with responsive rate and articulation
-    if (typeof momentum === 'number' && !isNaN(momentum)) {
+    if (typeof effectiveMomentum === 'number' && !isNaN(effectiveMomentum)) {
       voxLine.segments.forEach(seg => {
-        seg.pace.rate = Math.max(0.6, Math.min(1.5, Number((seg.pace.rate * momentum).toFixed(2))));
-        if (momentum > 1.35) {
+        seg.pace.rate = Math.max(0.6, Math.min(1.5, Number((seg.pace.rate * effectiveMomentum).toFixed(2))));
+        if (effectiveMomentum > 1.35) {
           seg.pace.articulation = 'staccato';
-        } else if (momentum < 0.8) {
+        } else if (effectiveMomentum < 0.8) {
           seg.pace.articulation = 'legato';
         }
       });
@@ -253,7 +308,7 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
       detectedMode: effectiveMode,
       mood: finalMood,
       voxLine,
-      momentum: typeof momentum === 'number' ? momentum : 1.0
+      momentum: typeof effectiveMomentum === 'number' ? effectiveMomentum : 1.0
     });
   } catch (err: any) {
     console.error('Chat API Error:', err);
@@ -309,7 +364,8 @@ app.post('/api/tts', async (req, res) => {
       else if (seg.intensity > 0.75) intensityModifier = 'intensely ';
 
       const toneDesc = moodObj.tone || moodObj.description || seg.mood;
-      let segmentStyle = `${intensityModifier}${toneDesc}`;
+      const paceDesc = compilePaceForGemini(seg.pace);
+      let segmentStyle = `${intensityModifier}${toneDesc}. ${paceDesc}`;
 
       if (seg.enter.kind === 'ramp' && prevMoodTag) {
         segmentStyle = `${prevMoodTag}, then ${segmentStyle}`;
@@ -425,11 +481,12 @@ app.post('/api/tts-stream', async (req, res) => {
       const clauseText = clauses[idx];
       const voxLine = parseVoxLine(clauseText, defaultMood);
       const toneDesc = defaultMood.tone || defaultMood.description || defaultMood.label;
+      const paceDesc = compilePaceForGemini(voxLine.segments[0]?.pace || { rate: 1.0, pause: 'normal', articulation: 'neutral' });
 
       const parts = [{
         text: clauseText,
         speechMetadata: {
-          style: `${toneDesc}. ${baseVocalStyle}`
+          style: `${toneDesc}. ${paceDesc}. ${baseVocalStyle}`
         }
       }];
 
@@ -628,37 +685,14 @@ ${transcript}`;
   }
 });
 
-// Diagnostic endpoint to test and verify a Gemini API Key
-app.post('/api/verify-api-key', async (req, res) => {
-  try {
-    const keyToTest = (req.headers['x-gemini-api-key'] as string) || req.body?.apiKey || process.env.GEMINI_API_KEY || '';
-    if (!keyToTest) {
-      return res.status(400).json({ valid: false, error: 'No API key provided or configured in server environment' });
-    }
-    const testAI = new GoogleGenAI({ apiKey: keyToTest });
-    const result = await testAI.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }],
-      config: { maxOutputTokens: 5 }
-    });
-    if (result.text) {
-      return res.json({ valid: true, message: 'API Key successfully verified with Gemini API' });
-    }
-    res.status(400).json({ valid: false, error: 'Empty response received from model' });
-  } catch (err: any) {
-    console.error('API Key verification failed:', err?.message || err);
-    res.status(401).json({ valid: false, error: err?.message || 'Invalid API Key or unauthorized' });
-  }
-});
+// Final SPA Catch-all handled below
 
-// Endpoint to inspect runtime server credentials status
-app.get('/api/status', (req, res) => {
-  const hasServerEnvKey = !!process.env.GEMINI_API_KEY;
-  const clientKeyProvided = !!req.headers['x-gemini-api-key'];
-  res.json({
-    hasServerEnvKey,
-    clientKeyProvided,
-    status: 'ok',
+// Global Error Handler
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('[Global Error]', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'An unexpected server error occurred',
+    path: req.path
   });
 });
 

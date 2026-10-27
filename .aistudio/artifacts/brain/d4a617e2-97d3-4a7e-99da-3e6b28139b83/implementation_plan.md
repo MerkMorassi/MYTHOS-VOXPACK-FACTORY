@@ -1,11 +1,20 @@
-# Implementation Plan - Mythos Voxpack Factory (Phases 1-4)
+# Implementation Plan - Mythos Voxpack Factory (Revised)
 
-## User Requirements & Scope
-- **Phase 1: Pace as Its Own Vector**: Add `PauseTier`, `Articulation`, and `Pace` interfaces to `src/types.ts`. Upgrade mood records to `voxpack.mood.v2` with `tone` and `pace`. Seed every mood's pace from the provided table. Implement `resolvePace` and compile pace attributes into Gemini style descriptors.
-- **Phase 2: Mid-Line Mood Shifts (`voxline.v1`)**: Implement robust `parseVoxLine(raw, ctx)` parser handling inline tags (`[mood]`, `[mood:intensity]`, `[mood ~ms]`, `[mood |ms]`, `[mood !]`, `[pace ...]`, `[/pace]`). Strip all directives, drop unknown tags safely, snap to word boundaries, merge short segments (< 3 words), and fill enter transitions using `classifyTransition`.
-- **Phase 3: Transitions & RENDER A/B**: Implement `classifyTransition` (none, beat, blend, ramp). Build diagnostic test endpoint / component to test Render A (single generateContent with N speechMetadata parts) vs Render B (server-side PCM stitching and audio crossfading).
-- **Phase 4: Momentum Across Turns**: Persist per-speaker `ProsodyState` (`mood`, `intensity`, `pace`, `at`) with the session. Implement scored candidate selection with hysteresis (score diff > 0.25). Store rendered `voxline.v1` with every message for identical audio replays.
-- **Deliverables**: Unit tests for `parseVoxLine`, `classifyTransition`, `resolvePace`, and word-boundary regexes. Demo script for rendering sample line through Render A and Render B.
+## Core Priority Tasks
+
+1.  **Session History Export (JSON)**: Add a button to the Chat/Lore view that exports the current session as a JSON file. Include: `timestamp`, `role`, `content`, and the `mood` tag associated with each message.
+2.  **Voice Studio Clarity**: Update the `VoiceStudio` component to clearly indicate when a voice sample is "Loaded & Active". Display the filename of the analyzed sample so the user knows exactly what the current profile is grounded in.
+3.  **Draft Persistence Hook**: Implement `useDraftPersistence(value, key)` hook. It should throttle/debounce saves of the current input box to `localStorage` every 3 seconds, allowing for automatic restoration on page refresh.
+4.  **Dynamic Vocal Performance (Pace & Parser)**: Implement the `parseVoxLine` parser to handle mid-sentence mood shifts (e.g., `[curious] Wait, [happy] you're here!`). Introduce the `Pace` vector (`rate`, `pause`, `articulation`) to move beyond simple speed adjustments.
+5.  **Emotional Momentum & Hysteresis**: Implement logic to persist `ProsodyState` across turns. Use a scored candidate selection with hysteresis (diff > 0.25) to ensure mood transitions feel organic and earned, not binary.
+
+## Technical Deliverables
+- `src/hooks/useDraftPersistence.ts`
+- `src/services/historyExporter.ts`
+- Updated `VoiceStudio.tsx` and `ChatContainer.tsx`
+- Refined `parseVoxLine` in `src/services/voxLineParser.ts`
+- Momentum logic in `server.ts`
+
 
 ---
 

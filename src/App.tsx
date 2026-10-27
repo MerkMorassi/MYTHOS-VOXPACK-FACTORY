@@ -172,7 +172,7 @@ Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
 
     // WARM UP MIC: Start pre-buffering as soon as voice session is active
     if (isVoiceSessionActive) {
-      voicePreBuffer.start().catch(err => console.warn('Pre-buffer start failed:', err));
+      voicePreBuffer.start(micStreamRef.current || undefined).catch(err => console.warn('Pre-buffer start failed:', err));
     } else {
       voicePreBuffer.stop();
     }
@@ -777,12 +777,17 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       requestAnimationFrame(animateOrb);
     } catch (err: any) {
       console.error(err);
-      const isQuotaError = err.message?.includes('Quota exceeded');
+      const errString = err.message || JSON.stringify(err);
+      const isQuotaError = errString.includes('Quota exceeded') || errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED');
+      const isUnavailable = errString.includes('503') || errString.includes('UNAVAILABLE') || errString.includes('high demand');
+      
       const errorMsg: Message = {
         id: 'msg_' + (Date.now() + 1) + '_' + Math.random().toString(36).substring(2, 7),
         role: 'assistant',
         content: isQuotaError 
           ? "I'm sorry, I've reached my current conversation limit. Please wait a few minutes before we continue."
+          : isUnavailable
+          ? "The model is currently experiencing high demand. I'm trying to stabilize the connection... please try sending your message again in a few seconds."
           : "Hmm... something went wrong with my connection. Let's try again in a moment.",
         mode: activeMode,
         timestamp: Date.now()
@@ -791,7 +796,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       setMessages(errorMessages);
       setOrbState('idle');
       
-      if (isQuotaError) {
+      if (isQuotaError || isUnavailable) {
         speakWithVoiceProfile(errorMsg.content, selectedVoice, undefined, selectedMood, conversationMomentum);
       }
     } finally {

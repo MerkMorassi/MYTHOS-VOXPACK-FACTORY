@@ -37,6 +37,7 @@ export const SamplerStudio: React.FC<SamplerStudioProps> = ({ selectedVoice }) =
   const [recordedAudioUrl, setRecordedAudioUrl] = useState<string | null>(null);
   const [recordedAudioBase64, setRecordedAudioBase64] = useState<string | null>(null);
   const [recordedMimeType, setRecordedMimeType] = useState<string>('audio/wav');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
   // Acoustic Match Analysis State
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -115,7 +116,7 @@ export const SamplerStudio: React.FC<SamplerStudioProps> = ({ selectedVoice }) =
       }, 100);
     } catch (err) {
       console.error('Microphone recording error:', err);
-      alert('Could not access microphone for sampler recording.');
+      setErrorMessage('Could not access microphone for sampler recording. Please ensure permissions are granted.');
     }
   };
 
@@ -270,7 +271,7 @@ export const SamplerStudio: React.FC<SamplerStudioProps> = ({ selectedVoice }) =
     );
 
     refreshLibrary();
-    alert(`Successfully registered WAV sample take for [${selectedTag}:${selectedLvl}] Take ${selectedTake}!`);
+    console.info(`Successfully registered WAV sample take for [${selectedTag}:${selectedLvl}] Take ${selectedTake}!`);
   };
 
   // Delete / Unregister Sample

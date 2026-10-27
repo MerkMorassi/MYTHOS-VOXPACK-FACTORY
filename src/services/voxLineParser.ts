@@ -74,6 +74,7 @@ export function parseVoxLine(raw: string, defaultMood: MoodOption, speaker = 'LI
   let currentIntensity = 0.6;
   let currentPaceOverride: Partial<Pace> | undefined = undefined;
   let pendingEchosSound: { tag: string; lvl: number; under?: boolean; offsetMs?: number } | undefined = undefined;
+  let pendingEnter: { kind: 'none' | 'blend' | 'ramp' | 'beat' | 'cut'; ms: number } | undefined = undefined;
   
   let match: RegExpExecArray | null;
 
@@ -131,22 +132,12 @@ export function parseVoxLine(raw: string, defaultMood: MoodOption, speaker = 'LI
           const mod = parts[i];
           if (mod.startsWith('~')) {
             const ms = parseInt(mod.slice(1), 10);
-            if (!isNaN(ms)) {
-              if (segments.length > 0) {
-                segments[segments.length - 1].enterExplicit = { kind: 'ramp', ms };
-              }
-            }
+            if (!isNaN(ms)) pendingEnter = { kind: 'ramp', ms };
           } else if (mod.startsWith('|')) {
             const ms = parseInt(mod.slice(1), 10);
-            if (!isNaN(ms)) {
-              if (segments.length > 0) {
-                segments[segments.length - 1].enterExplicit = { kind: 'beat', ms };
-              }
-            }
+            if (!isNaN(ms)) pendingEnter = { kind: 'beat', ms };
           } else if (mod === '!') {
-            if (segments.length > 0) {
-              segments[segments.length - 1].enterExplicit = { kind: 'cut', ms: 0 };
-            }
+            pendingEnter = { kind: 'cut', ms: 0 };
           }
         }
       } else {
@@ -178,9 +169,11 @@ export function parseVoxLine(raw: string, defaultMood: MoodOption, speaker = 'LI
         mood: currentMood,
         intensity: currentIntensity,
         paceOverride: currentPaceOverride,
+        enterExplicit: pendingEnter,
         echosSound: pendingEchosSound
       });
       pendingEchosSound = undefined;
+      pendingEnter = undefined;
     }
   }
 

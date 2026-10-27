@@ -29,6 +29,10 @@ export interface MoodOption {
   pitchMod?: number; // 0.5 to 2.0
   rateMod?: number; // 0.5 to 2.0
   volumeMod?: number; // 0.0 to 1.0
+  // Affect Vectors (Expert Phase 4/5)
+  valence?: number; // -1.0 (negative/sad) to 1.0 (positive/happy)
+  arousal?: number; // 0.0 (calm) to 1.0 (excited/intense)
+  dominance?: number; // 0.0 (submissive) to 1.0 (commanding)
 }
 
 export const MOOD_PACE_SEED: Record<string, [number, PauseTier, Articulation]> = {
@@ -260,6 +264,45 @@ function formatLabel(tag: string): string {
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
+function inferVADModifiers(tag: string, category: string, desc: string): { valence: number; arousal: number; dominance: number } {
+  const t = tag.replace(/[\[\]]/g, '').toLowerCase();
+  const d = desc.toLowerCase();
+  
+  // Default neutral
+  let v = 0.0;
+  let a = 0.5;
+  let d_val = 0.5;
+
+  // Category Baselines
+  if (category.includes('Joy')) { v = 0.7; a = 0.8; d_val = 0.6; }
+  else if (category.includes('Warmth')) { v = 0.8; a = 0.4; d_val = 0.4; }
+  else if (category.includes('Sorrow')) { v = -0.7; a = 0.3; d_val = 0.3; }
+  else if (category.includes('Fear')) { v = -0.6; a = 0.9; d_val = 0.2; }
+  else if (category.includes('Anger')) { v = -0.5; a = 0.9; d_val = 0.8; }
+  else if (category.includes('Command')) { v = 0.2; a = 0.7; d_val = 0.9; }
+  else if (category.includes('Irony')) { v = -0.2; a = 0.6; d_val = 0.7; }
+  else if (category.includes('Insecurity')) { v = -0.3; a = 0.5; d_val = 0.2; }
+  else if (category.includes('Mystical')) { v = 0.1; a = 0.4; d_val = 0.6; }
+
+  // Keyword Fine-tuning
+  if (/\b(whisper|soft|hushed|quiet)\b/i.test(d)) a -= 0.2;
+  if (/\b(loud|shout|explosive|intense)\b/i.test(d)) a += 0.2;
+  if (/\b(gentle|calm|relaxed)\b/i.test(d)) a -= 0.1;
+  if (/\b(urgent|rapid|fast)\b/i.test(d)) a += 0.15;
+  
+  if (/\b(sad|grief|pain|hurt|loss)\b/i.test(d)) v -= 0.2;
+  if (/\b(happy|excited|delight|joy)\b/i.test(d)) v += 0.2;
+  
+  if (/\b(power|authority|control|force)\b/i.test(d)) d_val += 0.2;
+  if (/\b(weak|timid|hesitant|unsure)\b/i.test(d)) d_val -= 0.2;
+
+  return { 
+    valence: Math.max(-1, Math.min(1, v)), 
+    arousal: Math.max(0, Math.min(1, a)), 
+    dominance: Math.max(0, Math.min(1, d_val)) 
+  };
+}
+
 export const EXHAUSTIVE_MOODS: MoodOption[] = (rawMoodsData as any[]).map((item) => {
   const cleanId = item.tag.replace(/[\[\]]/g, '').toLowerCase();
   const acoustic = inferAcousticModifiers(item.tag, item.description);
@@ -271,6 +314,7 @@ export const EXHAUSTIVE_MOODS: MoodOption[] = (rawMoodsData as any[]).map((item)
     articulation: seedPace[2]
   };
   const tone = generateTone(item.description);
+  const vad = inferVADModifiers(item.tag, category, item.description);
 
   return {
     id: cleanId,
@@ -287,6 +331,9 @@ export const EXHAUSTIVE_MOODS: MoodOption[] = (rawMoodsData as any[]).map((item)
     pitchMod: acoustic.pitchMod,
     rateMod: pace.rate,
     volumeMod: acoustic.volumeMod,
+    valence: vad.valence,
+    arousal: vad.arousal,
+    dominance: vad.dominance,
   };
 });
 

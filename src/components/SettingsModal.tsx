@@ -245,6 +245,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         body: JSON.stringify({ apiKey: keyToTest })
       });
 
+      if (!res.ok) {
+        const text = await res.text();
+        let errorMsg = `Server returned ${res.status}: ${res.statusText}`;
+        try {
+          const json = JSON.parse(text);
+          errorMsg = json.error || errorMsg;
+        } catch {
+          // If not JSON, use the status text or a snippet of the body
+          if (text.includes('<html') || text.includes('<!DOCTYPE')) {
+            errorMsg = `Endpoint '/api/verify-api-key' returned HTML instead of JSON. This usually indicates a 404 or server error.`;
+          }
+        }
+        throw new Error(errorMsg);
+      }
+
       const data = await res.json();
       if (data.valid) {
         setStatusMessage({
@@ -258,6 +273,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         });
       }
     } catch (err: any) {
+      console.error('API Verification error:', err);
       setStatusMessage({
         type: 'error',
         text: err?.message || 'Failed to reach API verification endpoint.'
@@ -819,14 +835,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80">
               <span className="text-[10px] text-slate-400 block font-semibold">Neural TTS Model:</span>
               <span className="font-mono text-slate-200 mt-0.5 block truncate">
-                gemini-3.8-flash-tts
+                gemini-3.8-flash-tts (Neural TTS)
               </span>
             </div>
 
             <div className="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80">
               <span className="text-[10px] text-slate-400 block font-semibold">Chat Inference:</span>
               <span className="font-mono text-slate-200 mt-0.5 block truncate">
-                gemini-3.8-flash
+                gemini-3.8-flash (Latest Flash)
               </span>
             </div>
 

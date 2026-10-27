@@ -187,13 +187,14 @@ class VoicePreBufferService {
   }
 
   /**
-   * Initialize and start background capture with threaded AudioWorklet Node
+   * Initialize and start background capture with threaded AudioWorklet Node.
+   * Can accept an existing MediaStream to avoid redundant permission prompts.
    */
-  async start() {
+  async start(existingStream?: MediaStream) {
     if (this.state.isActive) return;
 
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.stream = existingStream || await navigator.mediaDevices.getUserMedia({ audio: true });
       this.audioContext = await ensureAudioContextResumed();
       
       // 500ms rolling buffer size

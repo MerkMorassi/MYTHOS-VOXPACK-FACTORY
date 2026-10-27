@@ -181,7 +181,7 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
   const handleDeleteProfile = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (id === 'default_maya' || id === 'cinematic_alto') {
-      alert('Default built-in profiles cannot be deleted.');
+      console.info('Default built-in profiles cannot be deleted.');
       return;
     }
     const filtered = deleteVoiceProfile(id);
@@ -219,20 +219,29 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
           </p>
         </div>
 
-        {/* Upload Button */}
-        <label className={`cursor-pointer px-5 py-2.5 rounded-xl font-medium text-sm transition-all duration-200 flex items-center gap-2 shadow-lg ${
-          isUploading ? 'bg-slate-800 text-slate-400 cursor-not-allowed' : 'bg-violet-600 text-white shadow-violet-600/30 hover:bg-violet-500'
-        }`}>
-          <Upload className="w-4 h-4" />
-          {isUploading ? 'Analyzing Audio...' : 'Upload Voice Sample (.wav, .mp3)'}
-          <input 
-            type="file" 
-            accept="audio/*" 
-            className="hidden" 
-            onChange={handleFileUpload}
-            disabled={isUploading}
-          />
-        </label>
+        <div className="flex flex-col items-end gap-2">
+          {/* Upload Button */}
+          <label className={`cursor-pointer px-5 py-2.5 rounded-xl font-medium text-sm transition-all duration-200 flex items-center gap-2 shadow-lg ${
+            isUploading ? 'bg-slate-800 text-slate-400 cursor-not-allowed' : 'bg-violet-600 text-white shadow-violet-600/30 hover:bg-violet-500'
+          }`}>
+            <Upload className="w-4 h-4" />
+            {isUploading ? 'Analyzing Audio...' : 'Upload Voice Sample (.wav, .mp3)'}
+            <input 
+              type="file" 
+              accept="audio/*" 
+              className="hidden" 
+              onChange={handleFileUpload}
+              disabled={isUploading}
+            />
+          </label>
+
+          {selectedVoice.sampleFileName && !isUploading && (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[10px] text-emerald-400 font-bold animate-in fade-in slide-in-from-top-1">
+              <FileAudio className="w-3 h-3" />
+              ANALYZED: {selectedVoice.sampleFileName}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Sub-navigation Tabs: Voice Profiles vs Sampler Studio */}
@@ -330,13 +339,35 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
           </span>
           <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
             {selectedVoice.name}
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
-              Saved Permanently
-            </span>
+            {selectedVoice.sampleFileName ? (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold flex items-center gap-1">
+                <CheckCircle2 className="w-3 h-3" /> ACOUSTICALLY GROUNDED
+              </span>
+            ) : (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 border border-violet-500/30 font-medium">
+                Saved Permanently
+              </span>
+            )}
           </h2>
-          <p className="text-xs text-slate-400">
-            Tone: <span className="text-slate-200 capitalize">{selectedVoice.tone}</span> · Pitch: <span className="text-slate-200">{selectedVoice.pitch}x</span> · Rate: <span className="text-slate-200">{selectedVoice.rate}x</span> · Base: <span className="text-slate-200">{selectedVoice.baseVoice}</span>
-          </p>
+          <div className="text-xs text-slate-400 flex flex-col gap-1">
+            {selectedVoice.sampleFileName ? (
+              <div className="flex flex-col gap-0.5">
+                <span className="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                  <FileAudio className="w-3.5 h-3.5" />
+                  Loaded Sample: {selectedVoice.sampleFileName}
+                </span>
+                <span className="text-[10px] text-slate-500 italic">This voice profile is currently using the acoustic features extracted from the analyzed recording.</span>
+              </div>
+            ) : (
+              <span className="text-slate-500 italic">Source: Built-in Baseline Model (No custom sample loaded)</span>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">Tone: <span className="text-slate-200 capitalize">{selectedVoice.tone}</span></span>
+              <span className="bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">Pitch: <span className="text-slate-200">{selectedVoice.pitch}x</span></span>
+              <span className="bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">Rate: <span className="text-slate-200">{selectedVoice.rate}x</span></span>
+              <span className="bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700/50">Base: <span className="text-slate-200">{selectedVoice.baseVoice}</span></span>
+            </div>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -491,8 +522,13 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
                         </div>
                       )}
                       
-                      <p className="text-[11px] text-slate-500 truncate max-w-[200px]">
-                        {p.sampleFileName || 'Built-in Profile'}
+                      <p className={`text-[11px] truncate max-w-[200px] mt-0.5 flex items-center gap-1 ${p.sampleFileName ? 'text-emerald-400 font-medium' : 'text-slate-500'}`}>
+                        {p.sampleFileName ? (
+                          <>
+                            <FileAudio className="w-3 h-3" />
+                            {p.sampleFileName}
+                          </>
+                        ) : 'Built-in Profile'}
                       </p>
                     </div>
 

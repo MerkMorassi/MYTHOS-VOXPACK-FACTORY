@@ -40,9 +40,12 @@ import {
   Filter,
   Search,
   SlidersHorizontal,
-  PieChart as ChartPieIcon
+  ChartPieIcon,
+  Download,
+  FileAudio
 } from 'lucide-react';
 import { SessionMoodChart } from './SessionMoodChart';
+import { useDraftPersistence } from '../hooks/useDraftPersistence';
 
 export interface Message {
   id: string;
@@ -113,7 +116,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onSelectMood,
   onOpenMoodManager,
 }) => {
-  const [inputText, setInputText] = useState('');
+  const [inputText, setInputText, clearInputDraft] = useDraftPersistence(`lila_chat_draft_${currentSessionId || 'default'}`);
   const [showManualInput, setShowManualInput] = useState(false);
   const [showSessionDrawer, setShowSessionDrawer] = useState(false);
   const [showMoodDropdown, setShowMoodDropdown] = useState(false);
@@ -161,7 +164,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
     e.preventDefault();
     if (!inputText.trim() || isLoading || isSubmitting) return;
     const textToSend = inputText.trim();
-    setInputText('');
+    clearInputDraft();
     setIsSubmitting(true);
     
     // Explicitly pass 'keyboard' source to prevent starting mic feedback loop
@@ -207,6 +210,27 @@ export const ChatView: React.FC<ChatViewProps> = ({
     e.stopPropagation();
     const updated = deleteQuickPrompt(id);
     setQuickPrompts(updated);
+  };
+  
+  const handleExportSession = (session: ChatSession, e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    const exportData = session.messages.map(msg => ({
+      timestamp: msg.timestamp,
+      role: msg.role,
+      content: msg.content,
+      moodTags: msg.moodTag ? [msg.moodTag] : [] // Format as array as requested "mood tags"
+    }));
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `session-${session.title.replace(/\s+/g, '-').toLowerCase()}-${new Date(session.createdAt).toISOString().split('T')[0]}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const currentPersonaName = activePersona?.name || 'Lila';
@@ -277,6 +301,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <span className="text-xs font-semibold text-slate-200 group-hover:text-violet-300 truncate block">
               {selectedVoice.name}
             </span>
+            {selectedVoice.sampleFileName && (
+              <span className="text-[9px] text-emerald-400 font-bold flex items-center gap-1 mt-0.5">
+                <FileAudio className="w-2.5 h-2.5" /> LIVE SAMPLE
+              </span>
+            )}
           </div>
         </div>
 
@@ -514,18 +543,28 @@ export const ChatView: React.FC<ChatViewProps> = ({
                           </p>
                         </div>
 
-                        {onDeleteSession && sessions.length > 1 && (
+                        <div className="flex items-center gap-1">
                           <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeleteSession(s.id);
-                            }}
-                            className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-700/50"
-                            title="Delete conversation"
+                            onClick={(e) => handleExportSession(s, e)}
+                            className="p-1 rounded text-slate-500 hover:text-violet-400 hover:bg-slate-700/50"
+                            title="Export session as JSON"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Download className="w-3.5 h-3.5" />
                           </button>
-                        )}
+                          
+                          {onDeleteSession && sessions.length > 1 && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteSession(s.id);
+                              }}
+                              className="p-1 rounded text-slate-500 hover:text-rose-400 hover:bg-slate-700/50"
+                              title="Delete conversation"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })
@@ -549,6 +588,27 @@ export const ChatView: React.FC<ChatViewProps> = ({
             <span className="text-[10px] text-slate-400 block leading-tight">Performance:</span>
             <span className="text-xs font-bold text-slate-200 group-hover:text-pink-300 truncate block">
               Tone Insights
+            </span>
+          </div>
+        </button>
+
+        {/* Export Current Session Button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            const currentSession = sessions.find(s => s.id === currentSessionId);
+            if (currentSession) handleExportSession(currentSession, e);
+          }}
+          className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-md cursor-pointer hover:border-emerald-500/50 hover:bg-slate-900 transition-all text-left group"
+          title="Export the current chat session's history as a JSON file"
+        >
+          <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
+            <Download className="w-4 h-4 text-emerald-300 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <span className="text-[10px] text-slate-400 block leading-tight">Data:</span>
+            <span className="text-xs font-bold text-slate-200 group-hover:text-emerald-300 truncate block">
+              Export Session
             </span>
           </div>
         </button>
