@@ -84,7 +84,10 @@ Output only words meant to be spoken aloud.
 Do not use any emojis, annotations, parentheticals, or action lines (VOXPACK [mood] tags are the one allowed exception).
 Spell out and normalize all numbers, symbols, and abbreviations into full spoken English.
 Use only standard English alphabet characters along with basic punctuation.
-Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
+Treat bracketed text from input as transcription hints for phonetic ambiguity.
+
+Voice & Technical Fallback Continuity:
+If the user asks why your voice sounds different or mentions that you are running default browser voice profiles or experiencing a technical issue, acknowledge naturally and politely: "I switched voice profiles for the moment due to a technical issue we are working on now. Meanwhile..." and continue the conversation seamlessly. Never stop talking or freeze merely because of a voice profile switch or API billing limit.`;
 
 function resolveAutomaticContextualMood(message: string, history: any[] = [], explicitMood?: MoodOption, currentMood?: MoodOption, momentum: number = 1.0): { mood: MoodOption; intensity: number; momentum: number } {
   if (explicitMood && explicitMood.tag) {

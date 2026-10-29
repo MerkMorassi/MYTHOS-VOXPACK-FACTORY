@@ -6,7 +6,8 @@ import { PersonaManager } from './components/PersonaManager';
 import { LoreManager } from './components/LoreManager';
 import { MoodManager } from './components/MoodManager';
 import { OrbTheme } from './components/GlowingOrb';
-import { VoiceProfile, getSavedVoiceProfiles, speakWithVoiceProfile, stopCurrentAudio } from './services/voiceCloneService';
+import { VoiceProfile, getSavedVoiceProfiles, speakWithVoiceProfile, stopCurrentAudio, triggerAudioAlert } from './services/voiceCloneService';
+import { SystemAlertBanner } from './components/SystemAlertBanner';
 import { Persona, getActivePersona, getSavedPersonas } from './services/personaStore';
 import { 
   ChatSession, 
@@ -89,7 +90,10 @@ Output only words meant to be spoken aloud.
 Do not use any emojis, annotations, parentheticals, or action lines.
 Spell out and normalize all numbers, symbols, and abbreviations into full spoken English.
 Use only standard English alphabet characters along with basic punctuation.
-Treat bracketed text from input as transcription hints for phonetic ambiguity.`;
+Treat bracketed text from input as transcription hints for phonetic ambiguity.
+
+Voice & Technical Fallback Continuity:
+If the user asks why your voice sounds different or mentions that you are running default browser voice profiles or experiencing a technical issue, acknowledge naturally and politely: "I switched voice profiles for the moment due to a technical issue we are working on now. Meanwhile..." and continue the conversation seamlessly. Never stop talking or freeze merely because of a voice profile switch or API billing limit.`;
   });
 
   const [isLoading, setIsLoading] = useState(false);
@@ -785,10 +789,10 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         id: 'msg_' + (Date.now() + 1) + '_' + Math.random().toString(36).substring(2, 7),
         role: 'assistant',
         content: isQuotaError 
-          ? "I'm sorry, I've reached my current conversation limit. Please wait a few minutes before we continue."
+          ? "I switched voice profiles for the moment due to rate limits on the Gemini free tier. Meanwhile, let's keep going—could you repeat that last thought?"
           : isUnavailable
-          ? "The model is currently experiencing high demand. I'm trying to stabilize the connection... please try sending your message again in a few seconds."
-          : "Hmm... something went wrong with my connection. Let's try again in a moment.",
+          ? "I switched voice profiles for the moment due to high demand on the model. Meanwhile, let's keep going—could you send that again in a moment?"
+          : "I switched voice profiles for the moment due to a technical issue we are working on now. Meanwhile, let's continue—could you try that last message again?",
         mode: activeMode,
         timestamp: Date.now()
       };
@@ -796,9 +800,19 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       setMessages(errorMessages);
       setOrbState('idle');
       
-      if (isQuotaError || isUnavailable) {
-        speakWithVoiceProfile(errorMsg.content, selectedVoice, undefined, selectedMood, conversationMomentum);
-      }
+      triggerAudioAlert({
+        id: 'audio_alert_' + Date.now(),
+        type: isQuotaError ? 'quota_exhausted' : 'tts_error',
+        title: isQuotaError ? 'Free-Tier Rate Limit Reached' : 'Voice Switched for Continuity',
+        message: 'I switched voice profiles for the moment due to a technical issue we are working on now. Meanwhile, our conversation continues seamlessly.',
+        reason: isQuotaError 
+          ? 'Gemini API free-tier quota limit reached. Using browser voice fallback.' 
+          : 'Temporary Gemini API connection interruption. Continuing seamlessly.',
+        timestamp: Date.now(),
+        dismissible: true,
+      });
+
+      speakWithVoiceProfile(errorMsg.content, selectedVoice, undefined, selectedMood, conversationMomentum);
     } finally {
       setIsLoading(false);
       isSendingRef.current = false;
@@ -827,8 +841,11 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       <main className="flex-1">
         {activeTab === 'companion' && (
           <div className="space-y-6">
+            {/* System Alert Banner for audio playback and voice fallback monitoring */}
+            <SystemAlertBanner onOpenSettings={() => setIsSettingsOpen(true)} className="pt-4" />
+
             {/* Multi-Modal Vision Co-Presence HUD overlay panel */}
-            <div className="max-w-4xl mx-auto pt-6 px-6">
+            <div className="max-w-4xl mx-auto pt-2 px-6">
               <VisionHUD
                 isActive={isVisionActive}
                 onToggleActive={setIsVisionActive}

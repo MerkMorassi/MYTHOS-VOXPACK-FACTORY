@@ -32,6 +32,7 @@ import {
 } from '../services/voiceCloneService';
 import { SystemPromptTuner } from './SystemPromptTuner';
 import { SamplerStudio } from './SamplerStudio';
+import { SystemAlertBanner } from './SystemAlertBanner';
 import { Radio } from 'lucide-react';
 
 interface VoiceCloneStudioProps {
@@ -243,6 +244,9 @@ export const VoiceCloneStudio: React.FC<VoiceCloneStudioProps> = ({
           )}
         </div>
       </div>
+
+      {/* Audio Playback & Voice Fallback Monitor Banner */}
+      <SystemAlertBanner className="px-0" />
 
       {/* Sub-navigation Tabs: Voice Profiles vs Sampler Studio */}
       <div className="flex gap-2 border-b border-slate-800 pb-3">

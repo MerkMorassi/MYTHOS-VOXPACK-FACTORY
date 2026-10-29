@@ -61,6 +61,63 @@ import { decodeAudioDataShared } from './audioContextManager';
 import { attachProsodyEnvelope, ActiveModulationController } from './dynamicProsodyModulator';
 import { audioCacheStore } from './audioCacheStore';
 
+export interface AudioAlert {
+  id: string;
+  type: 'fallback_voice' | 'tts_error' | 'quota_exhausted' | 'playback_error';
+  title: string;
+  message: string;
+  reason?: string;
+  timestamp: number;
+  dismissible?: boolean;
+}
+
+type AudioAlertSubscriber = (alert: AudioAlert | null) => void;
+const audioAlertSubscribers = new Set<AudioAlertSubscriber>();
+let currentAudioAlert: AudioAlert | null = null;
+let hasSpokenFallbackPreface = false;
+
+export function triggerAudioAlert(alert: AudioAlert) {
+  currentAudioAlert = alert;
+  audioAlertSubscribers.forEach(sub => {
+    try {
+      sub(alert);
+    } catch (err) {
+      console.warn('Audio alert subscriber error:', err);
+    }
+  });
+}
+
+export function clearAudioAlert() {
+  currentAudioAlert = null;
+  audioAlertSubscribers.forEach(sub => {
+    try {
+      sub(null);
+    } catch (err) {
+      console.warn('Audio alert subscriber error:', err);
+    }
+  });
+}
+
+export function subscribeAudioAlerts(subscriber: AudioAlertSubscriber): () => void {
+  audioAlertSubscribers.add(subscriber);
+  subscriber(currentAudioAlert);
+  return () => {
+    audioAlertSubscribers.delete(subscriber);
+  };
+}
+
+export function getLatestAudioAlert(): AudioAlert | null {
+  return currentAudioAlert;
+}
+
+export function isUsingVoiceFallback(): boolean {
+  return isNeuralQuotaExhausted || !!currentAudioAlert;
+}
+
+export function resetFallbackVoiceNotice(): void {
+  hasSpokenFallbackPreface = false;
+}
+
 let activeAudioElement: HTMLAudioElement | null = null;
 let activeAudioBufferSource: AudioBufferSourceNode | null = null;
 let isNeuralQuotaExhausted = (() => {
@@ -680,6 +737,8 @@ export async function speakWithVoiceProfile(
         };
 
         bufferSource.start();
+        clearAudioAlert();
+        hasSpokenFallbackPreface = false;
         return; // Successfully retrieved and played from cache! Zero network synthesis latency.
       }
     } catch (cacheErr) {
@@ -768,6 +827,8 @@ export async function speakWithVoiceProfile(
         audioQueue.markFinished();
 
         if (chunksReceived > 0 && !streamQuotaExceeded) {
+          clearAudioAlert();
+          hasSpokenFallbackPreface = false;
           return; // Successfully streaming neural audio chunks
         }
       }
@@ -869,6 +930,8 @@ export async function speakWithVoiceProfile(
             activePlaybackEstimatedDurationSec = audio.duration || (textForTts.length * 0.07);
 
             await audio.play();
+            clearAudioAlert();
+            hasSpokenFallbackPreface = false;
             return; // Successfully playing neural audio, do NOT fall through
           } catch (playErr) {
             console.warn('Audio play error, falling back:', playErr);
@@ -905,6 +968,19 @@ async function fallbackSpeechSynthesis(
 ) {
   if (currentPlaybackSessionId !== sessionId) return;
 
+  // Broadcast non-intrusive alert that system gracefully fell back to browser voice
+  triggerAudioAlert({
+    id: 'audio_alert_' + Date.now(),
+    type: isNeuralQuotaExhausted ? 'quota_exhausted' : 'fallback_voice',
+    title: 'Using Browser Voice Fallback',
+    message: 'I switched voice profiles for the moment due to a technical issue we are working on now. Meanwhile, our conversation continues seamlessly.',
+    reason: isNeuralQuotaExhausted 
+      ? 'Gemini Neural TTS rate-limited (free-tier quota reached). System seamlessly using browser voice.' 
+      : 'Gemini Neural TTS is currently unavailable or rate-limited. System seamlessly using browser voice.',
+    timestamp: Date.now(),
+    dismissible: true,
+  });
+
   if (!('speechSynthesis' in window)) {
     onEnd();
     return;
@@ -920,9 +996,17 @@ async function fallbackSpeechSynthesis(
   // Ensure non-verbal vocalization tags ([sigh], [hum], etc.) are stripped for clean TTS
   const cleanDialogueForTTS = stripParalinguisticTags(cleanText);
 
+  // Gracefully preface the spoken utterance once so the user is informed without being interrupted
+  const FALLBACK_DISCLAIMER_PREFACE = "I switched voice profiles for the moment due to a technical issue we are working on now. Meanwhile, ";
+  let spokenDialogue = cleanDialogueForTTS;
+  if (!hasSpokenFallbackPreface && !spokenDialogue.toLowerCase().includes('switched voice profiles')) {
+    spokenDialogue = `${FALLBACK_DISCLAIMER_PREFACE} ${spokenDialogue}`;
+    hasSpokenFallbackPreface = true;
+  }
+
   try {
     window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(cleanDialogueForTTS);
+    const utterance = new SpeechSynthesisUtterance(spokenDialogue);
     
     // Calculate smoothed PaceVector via PaceEngine for natural rate and prosody transitions
     const basePitch = profile.pitch || 1.0;
