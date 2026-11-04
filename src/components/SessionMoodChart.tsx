@@ -297,7 +297,7 @@ export const SessionMoodChart: React.FC<SessionMoodChartProps> = ({
 
                   return (
                     <div 
-                      key={item.tag} 
+                      key={`${item.tag}-${idx}`} 
                       className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between text-xs"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">

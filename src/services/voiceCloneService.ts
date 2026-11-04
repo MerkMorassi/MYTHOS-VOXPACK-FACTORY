@@ -125,8 +125,8 @@ let isNeuralQuotaExhausted = (() => {
   const stored = localStorage.getItem('lila_neural_quota_exhausted');
   if (stored === 'true') {
     const timestamp = Number(localStorage.getItem('lila_neural_quota_timestamp') || 0);
-    // Recover after 2 hours (Gemini free tier reset window is often 2h-24h, 2h is a safe aggressive retry)
-    if (Date.now() - timestamp > 2 * 60 * 60 * 1000) {
+    // Recover after 1 minute (Gemini free tier reset window is often very short)
+    if (Date.now() - timestamp > 60 * 1000) {
       localStorage.removeItem('lila_neural_quota_exhausted');
       localStorage.removeItem('lila_neural_quota_timestamp');
       return false;
@@ -231,9 +231,47 @@ export async function uploadAndProcessVoiceSample(
     duration,
     createdAt: Date.now(),
   };
-
   saveVoiceProfile(profile);
   report('ready', `TTS Voice Profile "${profile.name}" created and ready!`, 100);
+  return profile;
+}
+
+export async function createReplicatedVoice(
+  referenceAudioBase64: string,
+  consentAudioBase64: string,
+  name: string
+): Promise<VoiceProfile> {
+  const res = await fetch('/api/create-replicated-voice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
+    body: JSON.stringify({ referenceAudioBase64, consentAudioBase64 }),
+  });
+  
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error || 'Failed to create voice clone');
+  }
+
+  const data = await res.json();
+  const voiceId = data.voice.name; // ID returned is 'voices/voice_...'
+
+  const profile: VoiceProfile = {
+    id: 'clone_' + Date.now(),
+    name: name,
+    sampleUrl: '',
+    sampleFileName: 'replicated_voice',
+    pitch: 1.0,
+    rate: 1.0,
+    tone: 'neutral',
+    baseVoice: 'Kore', // This will be overridden by the TTS engine using voiceId
+    vocalStyle: 'Authentic voice clone',
+    duration: 0,
+    createdAt: Date.now(),
+    // @ts-ignore
+    replicatedVoiceId: voiceId 
+  };
+  
+  saveVoiceProfile(profile);
   return profile;
 }
 

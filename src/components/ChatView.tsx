@@ -42,7 +42,9 @@ import {
   SlidersHorizontal,
   ChartPieIcon,
   Download,
-  FileAudio
+  FileAudio,
+  FileText,
+  Zap
 } from 'lucide-react';
 import { SessionMoodChart } from './SessionMoodChart';
 import { useDraftPersistence } from '../hooks/useDraftPersistence';
@@ -88,6 +90,40 @@ interface ChatViewProps {
   onOpenMoodManager?: () => void;
 }
 
+interface QuickActionBarItem {
+  id: string;
+  label: string;
+  prompt: string;
+  icon: React.ElementType;
+}
+
+const QUICK_ACTIONS: QuickActionBarItem[] = [
+  {
+    id: 'summarize',
+    label: 'Summarize our conversation',
+    prompt: 'Summarize our conversation so far, highlighting the key beats and emotional tone.',
+    icon: FileText,
+  },
+  {
+    id: 'write-scene',
+    label: 'Write a scene based on this',
+    prompt: 'Write and perform a dramatic scene based on what we just discussed, leaning into your signature voice.',
+    icon: Film,
+  },
+  {
+    id: 'analyze-mood',
+    label: 'Analyze current mood',
+    prompt: 'Analyze our current conversational mood and vocal dynamics, and tell me how the scene is feeling.',
+    icon: Sparkles,
+  },
+  {
+    id: 'deep-lore',
+    label: 'Tie into your lore',
+    prompt: 'Connect what we just discussed with a personal memory or backstory detail from your lived experience.',
+    icon: BrainCircuit,
+  },
+];
+
 export const ChatView: React.FC<ChatViewProps> = ({
   messages,
   onSendMessage,
@@ -117,7 +153,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   onOpenMoodManager,
 }) => {
   const [inputText, setInputText, clearInputDraft] = useDraftPersistence(`lila_chat_draft_${currentSessionId || 'default'}`);
-  const [showManualInput, setShowManualInput] = useState(false);
+  const [showManualInput, setShowManualInput] = useState(true);
   const [showSessionDrawer, setShowSessionDrawer] = useState(false);
   const [showMoodDropdown, setShowMoodDropdown] = useState(false);
   const [moodSearch, setMoodSearch] = useState('');
@@ -184,6 +220,15 @@ export const ChatView: React.FC<ChatViewProps> = ({
     setTriggeredPromptId(qp.id);
     onSendMessage(qp.prompt, 'prompt');
     setTimeout(() => setTriggeredPromptId(null), 1500);
+  };
+
+  const [activeQuickActionId, setActiveQuickActionId] = useState<string | null>(null);
+
+  const handleTriggerQuickAction = (action: QuickActionBarItem) => {
+    if (isLoading || isSubmitting) return;
+    setActiveQuickActionId(action.id);
+    onSendMessage(action.prompt, 'prompt');
+    setTimeout(() => setActiveQuickActionId(null), 1500);
   };
 
   const handleSaveNewPrompt = (e: React.FormEvent) => {
@@ -410,11 +455,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
                     No moods matching "{moodSearch}"
                   </p>
                 ) : (
-                  filteredMoods.map((mood) => {
+                  filteredMoods.map((mood, idx) => {
                     const isSelected = mood.id === selectedMood.id;
                     return (
                       <div
-                        key={mood.id}
+                        key={`dropdown-mood-${mood.id}-${idx}`}
                         onClick={() => {
                           onSelectMood(mood);
                           setShowMoodDropdown(false);
@@ -652,8 +697,8 @@ export const ChatView: React.FC<ChatViewProps> = ({
             >
               {MOOD_CATEGORIES.filter(c => c !== 'All').map((category) => (
                 <optgroup key={category} label={category} className="bg-slate-900 text-slate-300 font-bold">
-                  {EXHAUSTIVE_MOODS.filter(m => m.category === category).map((mood) => (
-                    <option key={mood.id} value={mood.id} className="bg-slate-950 text-slate-100 font-normal">
+                  {EXHAUSTIVE_MOODS.filter(m => m.category === category).map((mood, idx) => (
+                    <option key={`opt-${category}-${mood.id}-${idx}`} value={mood.id} className="bg-slate-950 text-slate-100 font-normal">
                       {mood.tag} {mood.label} — {mood.description.substring(0, 36)}...
                     </option>
                   ))}
@@ -669,21 +714,21 @@ export const ChatView: React.FC<ChatViewProps> = ({
             Quick Moods:
           </span>
           {[
-            { id: 'natural', tag: '[natural]', name: 'Natural' },
-            { id: 'excited', tag: '[excited]', name: 'Excited' },
-            { id: 'whisper', tag: '[whisper]', name: 'Whisper' },
-            { id: 'dramatic', tag: '[dramatic]', name: 'Dramatic' },
-            { id: 'noir', tag: '[noir]', name: 'Noir' },
+            { id: 'joyful', tag: '[joyful]', name: 'Joyful' },
             { id: 'playful', tag: '[playful]', name: 'Playful' },
-            { id: 'warm', tag: '[warm]', name: 'Warm' },
+            { id: 'conspiratorial', tag: '[conspiratorial]', name: 'Whisper' },
+            { id: 'soothing', tag: '[soothing]', name: 'Soothing' },
+            { id: 'affectionate', tag: '[affectionate]', name: 'Warm' },
+            { id: 'storyteller', tag: '[storyteller]', name: 'Dramatic' },
+            { id: 'serene', tag: '[serene]', name: 'Serene' },
             { id: 'urgent', tag: '[urgent]', name: 'Urgent' },
-            { id: 'melancholic', tag: '[melancholic]', name: 'Melancholic' },
-            { id: 'inquisitive', tag: '[inquisitive]', name: 'Curious' },
-          ].map((item) => {
+            { id: 'melancholy', tag: '[melancholy]', name: 'Melancholic' },
+            { id: 'hesitant', tag: '[hesitant]', name: 'Curious' },
+          ].map((item, idx) => {
             const isSelected = selectedMood.id === item.id;
             return (
               <button
-                key={item.id}
+                key={`quick-mood-${item.id}-${idx}`}
                 type="button"
                 onClick={() => onSelectMood(getMoodById(item.id))}
                 className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all flex items-center gap-1.5 ${
@@ -1017,26 +1062,58 @@ export const ChatView: React.FC<ChatViewProps> = ({
         </div>
       </div>
 
-      {/* Keyboard Fallback Drawer (Collapsible) */}
-      <div className="pt-2">
-        <button
-          onClick={() => setShowManualInput(!showManualInput)}
-          className="text-xs text-slate-500 hover:text-slate-400 flex items-center gap-1.5 transition-colors mb-2 ml-auto"
-        >
-          <Keyboard className="w-3.5 h-3.5" />
-          <span>{showManualInput ? 'Hide keyboard input' : 'Optional keyboard input'}</span>
-          {showManualInput ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-        </button>
+      {/* Quick Action Overlay Bar & Chat Input Area */}
+      <div className="sticky bottom-4 z-40 space-y-2 pt-2">
+        {/* Quick Action Overlay Bar */}
+        <div className="p-2 rounded-2xl bg-slate-900/95 border border-slate-800 shadow-xl backdrop-blur-md flex items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-none py-0.5 flex-1 min-w-0">
+            <span className="text-[10px] font-semibold tracking-wider uppercase text-violet-400 flex items-center gap-1 pl-1 shrink-0">
+              <Zap className="w-3 h-3 text-amber-400 fill-amber-400" /> Quick Actions
+            </span>
+            {QUICK_ACTIONS.map((action) => {
+              const Icon = action.icon;
+              const isTriggered = activeQuickActionId === action.id;
+              return (
+                <button
+                  key={action.id}
+                  type="button"
+                  onClick={() => handleTriggerQuickAction(action)}
+                  disabled={isLoading || isSubmitting}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium border transition-all duration-200 ${
+                    isTriggered
+                      ? 'bg-violet-600 text-white border-violet-400 shadow-md shadow-violet-600/30 scale-95'
+                      : 'bg-slate-800/90 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700/60 hover:border-violet-500/60'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                  title={action.prompt}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${isTriggered ? 'text-white' : 'text-violet-400'}`} />
+                  <span>{action.label}</span>
+                </button>
+              );
+            })}
+          </div>
 
+          <button
+            onClick={() => setShowManualInput(!showManualInput)}
+            className="text-xs text-slate-400 hover:text-slate-200 flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800/70 border border-slate-700/60 hover:border-slate-600 transition-colors shrink-0"
+            title={showManualInput ? 'Hide keyboard input' : 'Open keyboard input'}
+          >
+            <Keyboard className="w-3.5 h-3.5 text-slate-400" />
+            <span className="hidden sm:inline">{showManualInput ? 'Hide Input' : 'Type Message'}</span>
+            {showManualInput ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        {/* Keyboard Input Form */}
         {showManualInput && (
-          <form onSubmit={handleSubmit} className="sticky bottom-4 z-40">
+          <form onSubmit={handleSubmit} className="bg-slate-900/95 p-3 rounded-2xl border border-slate-700/80 shadow-2xl backdrop-blur-md">
             <div className="flex flex-wrap gap-1.5 mb-2 px-1">
-              {['natural', 'excited', 'whisper', 'dramatic', 'noir', 'playful', 'warm'].map((id) => {
+              {['joyful', 'playful', 'conspiratorial', 'soothing', 'affectionate', 'storyteller', 'serene'].map((id, idx) => {
                 const mood = getMoodById(id);
                 const isSelected = mood.id === selectedMood.id;
                 return (
                   <button
-                    key={mood.id}
+                    key={`input-mood-${mood.id}-${idx}`}
                     type="button"
                     onClick={() => onSelectMood(mood)}
                     className={`px-3 py-1 rounded-full text-[10px] font-medium transition-all ${
@@ -1050,13 +1127,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
                 );
               })}
             </div>
-            <div className="flex gap-3 p-2 rounded-2xl bg-slate-900 border border-slate-700/80 shadow-2xl backdrop-blur-md">
+            <div className="flex gap-3">
               <input
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder={activeMode === 'on-stage' ? "Deliver your line for the scene..." : `Type text message to ${currentPersonaName}...`}
-                className="flex-1 bg-transparent px-4 py-2.5 text-sm text-slate-100 focus:outline-none placeholder-slate-500"
+                className="flex-1 bg-slate-950/60 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-violet-500/60 placeholder-slate-500"
                 disabled={isLoading || isSubmitting}
               />
               <button

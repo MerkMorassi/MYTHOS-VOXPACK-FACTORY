@@ -26,12 +26,21 @@ app.post('/api/verify-api-key', async (req, res) => {
       return res.status(400).json({ valid: false, error: 'No API key provided or configured in server environment' });
     }
     const testAI = new GoogleGenAI({ apiKey: keyToTest });
-    const result = await testAI.models.generateContent({
-      model: 'gemini-3.8-flash',
-      contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }],
-      config: { maxOutputTokens: 5 }
-    });
-    if (result.text) {
+    let text = '';
+    for (const m of ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash']) {
+      try {
+        const result = await testAI.models.generateContent({
+          model: m,
+          contents: [{ role: 'user', parts: [{ text: 'Respond with OK' }] }],
+          config: { maxOutputTokens: 5 }
+        });
+        if (result.text) {
+          text = result.text;
+          break;
+        }
+      } catch (_) {}
+    }
+    if (text) {
       return res.json({ valid: true, message: 'API Key successfully verified with Gemini API' });
     }
     res.status(400).json({ valid: false, error: 'Empty response received from model' });
@@ -217,26 +226,31 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
         }
       });
     }
-    currentUserParts.push({ text: message || (image ? 'Observe my camera feed and describe what you see.' : '') });
+    const cleanUserText = (message || '').trim() || (image ? 'Observe my camera feed and describe what you see.' : 'Hello Lila.');
+    currentUserParts.push({ text: cleanUserText });
 
     // Merge consecutive turns with the same role and append current user message
     const allTurns = [...rawTurns, { role: 'user', parts: currentUserParts }];
     const sanitizedContents: Array<{ role: string; parts: any[] }> = [];
 
     for (const turn of allTurns) {
+      const validParts = turn.parts.filter(p => (p.text && p.text.trim().length > 0) || p.inlineData);
+      if (validParts.length === 0) continue;
+
       if (sanitizedContents.length > 0 && sanitizedContents[sanitizedContents.length - 1].role === turn.role) {
-        sanitizedContents[sanitizedContents.length - 1].parts.push(...turn.parts);
+        sanitizedContents[sanitizedContents.length - 1].parts.push(...validParts);
       } else {
-        sanitizedContents.push(turn);
+        sanitizedContents.push({ role: turn.role, parts: validParts });
       }
     }
 
     const contents = sanitizedContents;
 
     const modelsToTry = [
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
       'gemini-3.8-flash',
-      'gemini-3.8-flash-lite',
-      'gemini-1.5-flash'
+      'gemini-4-argon'
     ];
     let reply = '';
     let lastErr: any = null;
@@ -245,7 +259,7 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
 
     for (const model of modelsToTry) {
       let attempts = 0;
-      const maxAttempts = model.includes('3.0') || model.includes('preview') ? 1 : 2; // Retry less on experimental/busy preview models
+      const maxAttempts = model.includes('3.8') ? 1 : 2;
       
       while (attempts < maxAttempts) {
         try {
@@ -265,24 +279,33 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
         } catch (err: any) {
           lastErr = err;
           const is503 = err?.status === 503 || err?.message?.includes('503') || err?.message?.includes('UNAVAILABLE');
+          const is429 = err?.status === 429 || err?.message?.includes('429') || err?.message?.includes('RESOURCE_EXHAUSTED');
           
-          if (is503 && attempts < maxAttempts - 1) {
+          if ((is503 || is429) && attempts < maxAttempts - 1) {
             attempts++;
-            const delay = 1000 * attempts;
-            console.log(`Model ${model} busy (503), retrying in ${delay}ms...`);
+            const delay = 800 * attempts;
+            console.log(`Model ${model} busy (${err?.status || 'unknown'}), retrying in ${delay}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
             continue;
           }
           
-          console.warn(`Model ${model} failed or unavailable, trying fallback:`, err?.message || err);
+          console.warn(`Model ${model} failed, trying fallback:`, err?.message || err);
           break; // Move to next model in the list
         }
       }
       if (reply) break;
     }
 
-    if (!reply && lastErr) {
-      throw lastErr;
+    // Graceful conversational continuity: if models are temporarily rate-limited or busy, never drop the conversation
+    if (!reply) {
+      console.warn('All Gemini chat models unavailable, serving conversational fallback:', lastErr?.message || lastErr);
+      const isQuota = lastErr?.status === 429 || JSON.stringify(lastErr || '').includes('429') || JSON.stringify(lastErr || '').includes('RESOURCE_EXHAUSTED');
+      
+      if (isQuota) {
+        reply = `[reflective] I switched voice profiles for the moment due to rate limits on the free tier. Meanwhile, I heard you: "${cleanUserText.slice(0, 80)}". Let's keep our conversation going.`;
+      } else {
+        reply = `[reflective] I experienced a brief connection flutter, but I'm right here. Regarding what you just said—"${cleanUserText.slice(0, 80)}"—tell me what you'd like to do next.`;
+      }
     }
 
     const parsedProsody = extractContextualProsody(reply);
@@ -326,12 +349,23 @@ Directive: Acknowledge that you were cut off if natural (e.g. "As I was saying..
   }
 });
 
+// Global TTS circuit breaker: When Free Tier quota (3 RPM) is exhausted, cool down for 60s
+let ttsQuotaCooldownUntil = 0;
+
 // Neural TTS generation using Gemini 3.8 Flash Lite TTS (Full Response)
 app.post('/api/tts', async (req, res) => {
   try {
     const { text, voiceProfile, mood, momentum } = req.body;
     if (!text) {
       return res.status(400).json({ error: 'Text is required for TTS' });
+    }
+
+    if (Date.now() < ttsQuotaCooldownUntil) {
+      const waitSec = Math.ceil((ttsQuotaCooldownUntil - Date.now()) / 1000);
+      return res.json({ 
+        quotaExceeded: true, 
+        message: `TTS rate limit cooldown active (${waitSec}s remaining). Using browser voice.` 
+      });
     }
 
     const defaultMood = mood || findMoodByTag('joyful') || EXHAUSTIVE_MOODS[0];
@@ -397,41 +431,69 @@ app.post('/api/tts', async (req, res) => {
       });
     }
 
-    const ttsModels = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+    const ttsModels = ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts'];
     let response: any = null;
     let lastTtsErr: any = null;
     const aiClient = getGenAIClient(req);
 
     for (const model of ttsModels) {
-      try {
-        response = await aiClient.models.generateContent({
-          model,
-          contents: [
-            {
-              role: 'user',
-              parts,
-            },
-          ],
-          config: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: baseVoice },
+      if (Date.now() < ttsQuotaCooldownUntil) {
+        break; // Circuit breaker active, skip remaining models
+      }
+      let attempts = 0;
+      const maxAttempts = 2;
+      while (attempts < maxAttempts) {
+        try {
+          response = await aiClient.models.generateContent({
+            model,
+            contents: [
+              {
+                role: 'user',
+                parts,
+              },
+            ],
+            config: {
+              responseModalities: ['AUDIO'],
+              speechConfig: {
+                voiceConfig: {
+                  prebuiltVoiceConfig: { voiceName: baseVoice },
+                },
               },
             },
-          },
-        });
-        if (response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+          });
+          if (response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+            break;
+          }
+        } catch (err: any) {
+          lastTtsErr = err;
+          const is503 = err?.status === 503 || err?.message?.includes('503') || err?.message?.includes('UNAVAILABLE');
+          const is429 = err?.status === 429 || err?.message?.includes('429') || err?.message?.includes('RESOURCE_EXHAUSTED') || err?.message?.includes('Quota exceeded');
+          
+          if (is429) {
+            ttsQuotaCooldownUntil = Date.now() + 60000;
+            console.warn(`[TTS Quota] 429 rate limit exceeded on ${model}. Circuit breaker activated for 60s. Yielding to browser fallback.`);
+            break; // Stop immediately - do not retry or cycle through models on 429
+          }
+
+          if (is503 && attempts < maxAttempts - 1) {
+            attempts++;
+            const delay = 1000 * Math.pow(2, attempts);
+            console.log(`TTS Model ${model} busy (503), retrying in ${delay}ms...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+          console.warn(`TTS model ${model} unavailable/failed:`, err?.message || err);
           break;
         }
-      } catch (err: any) {
-        lastTtsErr = err;
-        console.warn(`TTS model ${model} unavailable, trying fallback:`, err?.message || err);
+      }
+      if (response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data) {
+        break;
       }
     }
 
     if (!response && lastTtsErr) {
-      throw lastTtsErr;
+      console.warn('[TTS Info] Neural voice models unavailable or rate-limited, returning graceful quotaExceeded flag for browser fallback.');
+      return res.json({ quotaExceeded: true });
     }
 
     const base64Audio = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
@@ -440,19 +502,11 @@ app.post('/api/tts', async (req, res) => {
       const processedAudio = injectMicroSilences(base64Audio, paceToUse);
       res.json({ audio: processedAudio });
     } else {
-      res.status(500).json({ error: 'No audio generated by TTS model' });
+      res.json({ quotaExceeded: true });
     }
   } catch (err: any) {
-    const isQuota = err?.status === 429 || 
-                    err?.message?.includes('429') || 
-                    err?.message?.includes('RESOURCE_EXHAUSTED') ||
-                    err?.message?.includes('Quota exceeded');
-    if (isQuota) {
-      console.log('[TTS Info] Free-tier quota reached for neural voice. Client using browser speech fallback.');
-      return res.json({ quotaExceeded: true });
-    }
-    console.error('TTS error:', err?.message || err);
-    res.status(500).json({ error: err?.message || 'Failed to synthesize speech' });
+    console.warn('[TTS Info] Caught error in /api/tts, returning quotaExceeded for browser voice continuity:', err?.message || err);
+    return res.json({ quotaExceeded: true, error: err?.message || 'TTS unavailable' });
   }
 });
 
@@ -475,12 +529,22 @@ app.post('/api/tts-stream', async (req, res) => {
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
+    if (Date.now() < ttsQuotaCooldownUntil) {
+      const waitSec = Math.ceil((ttsQuotaCooldownUntil - Date.now()) / 1000);
+      res.write(JSON.stringify({ quotaExceeded: true, message: `TTS rate limit cooldown active (${waitSec}s remaining).` }) + '\n');
+      return res.end();
+    }
+
     const defaultMood = mood || findMoodByTag('joyful') || EXHAUSTIVE_MOODS[0];
     const baseVoice = voiceProfile?.baseVoice || 'Kore';
     const baseVocalStyle = voiceProfile?.vocalStyle || 'Warm, authentic, natural conversational female voice';
     const aiClient = getGenAIClient(req);
 
     for (let idx = 0; idx < clauses.length; idx++) {
+      if (Date.now() < ttsQuotaCooldownUntil) {
+        res.write(JSON.stringify({ quotaExceeded: true }) + '\n');
+        break;
+      }
       const clauseText = clauses[idx];
       const voxLine = parseVoxLine(clauseText, defaultMood);
       const toneDesc = defaultMood.tone || defaultMood.description || defaultMood.label;
@@ -496,35 +560,56 @@ app.post('/api/tts-stream', async (req, res) => {
       let clauseAudio: string | null = null;
       let isQuotaExceeded = false;
 
-      for (const model of ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts']) {
-        try {
-          const response = await aiClient.models.generateContent({
-            model,
-            contents: [{ role: 'user', parts }],
-            config: {
-              responseModalities: ['AUDIO'],
-              speechConfig: {
-                voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: baseVoice },
+      for (const model of ['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts']) {
+        if (Date.now() < ttsQuotaCooldownUntil) {
+          isQuotaExceeded = true;
+          break;
+        }
+        let attempts = 0;
+        const maxAttempts = 2;
+        while (attempts < maxAttempts) {
+          try {
+            const response = await aiClient.models.generateContent({
+              model,
+              contents: [{ role: 'user', parts }],
+              config: {
+                responseModalities: ['AUDIO'],
+                speechConfig: {
+                  voiceConfig: {
+                    prebuiltVoiceConfig: { voiceName: baseVoice },
+                  },
                 },
               },
-            },
-          });
-          const rawBase64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-          if (rawBase64) {
-            const paceToUse = voxLine.segments[0]?.pace || { rate: 1.0, pause: 'normal', articulation: 'neutral' };
-            clauseAudio = injectMicroSilences(rawBase64, paceToUse);
+            });
+            const rawBase64 = response?.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+            if (rawBase64) {
+              const paceToUse = voxLine.segments[0]?.pace || { rate: 1.0, pause: 'normal', articulation: 'neutral' };
+              clauseAudio = injectMicroSilences(rawBase64, paceToUse);
+              break;
+            }
+          } catch (err: any) {
+            const is503 = err?.status === 503 || err?.message?.includes('503') || err?.message?.includes('UNAVAILABLE');
+            const is429 = err?.status === 429 || err?.message?.includes('429') || err?.message?.includes('RESOURCE_EXHAUSTED') || err?.message?.includes('Quota exceeded');
+            
+            if (is429) {
+              ttsQuotaCooldownUntil = Date.now() + 60000;
+              isQuotaExceeded = true;
+              console.warn(`[TTS-Stream Quota] 429 rate limit exceeded on ${model}. Circuit breaker activated for 60s.`);
+              break;
+            }
+
+            if (is503 && attempts < maxAttempts - 1) {
+              attempts++;
+              const delay = 1000 * Math.pow(2, attempts);
+              console.log(`TTS-Stream Model ${model} busy (503), retrying in ${delay}ms...`);
+              await new Promise(resolve => setTimeout(resolve, delay));
+              continue;
+            }
             break;
           }
-        } catch (err: any) {
-          const isQuota = err?.status === 429 || 
-                          err?.message?.includes('429') || 
-                          err?.message?.includes('RESOURCE_EXHAUSTED') ||
-                          err?.message?.includes('Quota exceeded');
-          if (isQuota) {
-            isQuotaExceeded = true;
-            break;
-          }
+        }
+        if (clauseAudio || isQuotaExceeded) {
+          break;
         }
       }
 
@@ -615,6 +700,56 @@ Return strictly a JSON object:
     res.status(500).json({ error: err.message || 'Failed to analyze voice sample' });
   }
 });
+
+// Create a replicated voice using Gemini Voices API
+app.post('/api/create-replicated-voice', async (req, res) => {
+  try {
+    const { referenceAudioBase64, consentAudioBase64 } = req.body;
+    if (!referenceAudioBase64 || !consentAudioBase64) {
+      return res.status(400).json({ error: 'Reference and consent audio are required' });
+    }
+
+    const apiKey = (req.headers['x-gemini-api-key'] as string) || process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(401).json({ error: 'API key is required' });
+    }
+
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/voices', {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        store: true,
+        voice: {
+          type: 'VOICE_TYPE_REPLICATED',
+          replicated_source: {
+            reference_audio: {
+              mime_type: 'audio/wav',
+              data: referenceAudioBase64,
+            },
+            consent_audio: {
+              mime_type: 'audio/wav',
+              data: consentAudioBase64,
+            }
+          }
+        }
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error?.message || 'Failed to create replicated voice');
+    }
+
+    res.json(data);
+  } catch (err: any) {
+    console.error('Create replicated voice error:', err);
+    res.status(500).json({ error: err.message || 'Failed to create replicated voice' });
+  }
+});
+
 
 // Transcribe audio using Gemini multimodal capabilities (speech-to-text fallback for all browsers)
 app.post('/api/transcribe', async (req, res) => {

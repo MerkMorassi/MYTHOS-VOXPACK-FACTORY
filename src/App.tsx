@@ -578,80 +578,92 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
     isSendingRef.current = true;
     handleSendMessageRef.current = handleSendMessage;
 
-    // Hard stop any previous audio
-    // Automatically detect long silences and speech pauses in the user's input and trim them
-    const rawCleanText = text
-      .replace(/(\.{3,}|\s*\[(?:pause|silence|breath)\]\s*)/gi, ' ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-
-    // Identify and strip paralinguistic tags like [sigh] or [hum] from user dialogue
-    const { cleanDialogue: cleanInputText, identifiedTags: userInputTags } = identifyAndStripParalinguisticTags(rawCleanText);
-    if (userInputTags.length > 0) {
-      userInputTags.forEach(sound => {
-        echos.setState({ lastTag: sound.tag, level: sound.lvl });
-      });
-    }
-
-    // Compute conversational momentum based on message length, sentiment, and energetic markers
-    const words = cleanInputText.split(/\s+/).filter(Boolean);
-    const wordCount = words.length;
-    const exclamationCount = (cleanInputText.match(/!/g) || []).length;
-    const questionCount = (cleanInputText.match(/\?/g) || []).length;
-
-    const lower = cleanInputText.toLowerCase();
-    const highEnergyRegex = /\b(fast|rapid|quick|hurry|run|now|immediately|furious|excited|panic|terrified|amazing|awesome|love|hate|punch|strike|screaming)\b/i;
-    const calmRegex = /\b(calm|peace|quiet|soft|whisper|tired|sleepy|rest|slow|relax|gentle|sigh|steady)\b/i;
-
-    let delta = 0;
-    if (highEnergyRegex.test(lower)) delta += 0.25;
-    if (calmRegex.test(lower)) delta -= 0.25;
-    delta += Math.min(0.3, exclamationCount * 0.15);
-    delta += Math.min(0.1, questionCount * 0.05);
-    if (wordCount > 20) delta += 0.15;
-    else if (wordCount < 4) delta -= 0.1;
-
-    const targetScore = Math.max(0.5, Math.min(2.0, 1.0 + delta));
-    const updatedMomentum = Number((conversationMomentum * 0.65 + targetScore * 0.35).toFixed(2));
-    setConversationMomentum(updatedMomentum);
-
-    // Multi-modal vision co-presence: attach current camera frame if active
-    let frameToSend: string | undefined = undefined;
-    if (isVisionActive && (autoAttachVision || source === 'prompt') && latestVisionFrame) {
-      frameToSend = latestVisionFrame;
-    }
-
-    const userMsg: Message = {
-      id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-      role: 'user',
-      content: cleanInputText || text,
-      mode: activeMode,
-      timestamp: Date.now(),
-      imagePreview: frameToSend,
-    };
-
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
-    setIsLoading(true);
-    setOrbState('thinking');
-
-    // CRITICAL BUGFIX: When using optional keyboard or prompt, DO NOT activate turn-taking mic loop!
-    if (source === 'voice') {
-      setIsVoiceSessionActive(true);
-      isVoiceSessionActiveRef.current = true;
-    } else {
-      echos.play('floor_ack');
-      setIsVoiceSessionActive(false);
-      isVoiceSessionActiveRef.current = false;
-      try {
-        recognitionRef.current?.abort();
-      } catch (_) {}
-    }
-
-    const loreSnippets = searchLore(cleanInputText || text, 3);
-    const activeInterruption = interruptionMemoryStore.getLastInterruption();
-
     try {
+      // Hard stop any previous audio
+      // Automatically detect long silences and speech pauses in the user's input and trim them
+      const rawCleanText = (text || '')
+        .replace(/(\.{3,}|\s*\[(?:pause|silence|breath)\]\s*)/gi, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+      // Identify and strip paralinguistic tags like [sigh] or [hum] from user dialogue
+      const { cleanDialogue: cleanInputText, identifiedTags: userInputTags } = identifyAndStripParalinguisticTags(rawCleanText);
+      if (userInputTags.length > 0) {
+        userInputTags.forEach(sound => {
+          echos.setState({ lastTag: sound.tag, level: sound.lvl });
+        });
+      }
+
+      // Compute conversational momentum based on message length, sentiment, and energetic markers
+      const words = cleanInputText.split(/\s+/).filter(Boolean);
+      const wordCount = words.length;
+      const exclamationCount = (cleanInputText.match(/!/g) || []).length;
+      const questionCount = (cleanInputText.match(/\?/g) || []).length;
+
+      const lower = cleanInputText.toLowerCase();
+      const highEnergyRegex = /\b(fast|rapid|quick|hurry|run|now|immediately|furious|excited|panic|terrified|amazing|awesome|love|hate|punch|strike|screaming)\b/i;
+      const calmRegex = /\b(calm|peace|quiet|soft|whisper|tired|sleepy|rest|slow|relax|gentle|sigh|steady)\b/i;
+
+      let delta = 0;
+      if (highEnergyRegex.test(lower)) delta += 0.25;
+      if (calmRegex.test(lower)) delta -= 0.25;
+      delta += Math.min(0.3, exclamationCount * 0.15);
+      delta += Math.min(0.1, questionCount * 0.05);
+      if (wordCount > 20) delta += 0.15;
+      else if (wordCount < 4) delta -= 0.1;
+
+      const targetScore = Math.max(0.5, Math.min(2.0, 1.0 + delta));
+      const updatedMomentum = Number((conversationMomentum * 0.65 + targetScore * 0.35).toFixed(2));
+      setConversationMomentum(updatedMomentum);
+
+      // Multi-modal vision co-presence: attach current camera frame if active
+      let frameToSend: string | undefined = undefined;
+      if (isVisionActive && (autoAttachVision || source === 'prompt') && latestVisionFrame) {
+        frameToSend = latestVisionFrame;
+      }
+
+      const userMsg: Message = {
+        id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        role: 'user',
+        content: cleanInputText || text,
+        mode: activeMode,
+        timestamp: Date.now(),
+        imagePreview: frameToSend,
+      };
+
+      const newMessages = [...messages, userMsg];
+      setMessages(newMessages);
+      setIsLoading(true);
+      setOrbState('thinking');
+
+      // Immediately save user message to active session in localStorage
+      if (currentSessionId) {
+        const targetSession = sessions.find(s => s.id === currentSessionId);
+        if (targetSession) {
+          saveSession({
+            ...targetSession,
+            messages: newMessages,
+            updatedAt: Date.now(),
+          });
+        }
+      }
+
+      // CRITICAL BUGFIX: When using optional keyboard or prompt, DO NOT activate turn-taking mic loop!
+      if (source === 'voice') {
+        setIsVoiceSessionActive(true);
+        isVoiceSessionActiveRef.current = true;
+      } else {
+        echos.play('floor_ack');
+        setIsVoiceSessionActive(false);
+        isVoiceSessionActiveRef.current = false;
+        try {
+          recognitionRef.current?.abort();
+        } catch (_) {}
+      }
+
+      const loreSnippets = searchLore(cleanInputText || text, 3);
+      const activeInterruption = interruptionMemoryStore.getLastInterruption();
+
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...getApiAuthHeaders() },
@@ -674,13 +686,15 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       }
 
       const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      if (!res.ok && data.error) {
+        throw new Error(data.error);
+      }
 
       if (typeof data.momentum === 'number') {
         setConversationMomentum(data.momentum);
       }
 
-      const rawReplyContent = data.reply || '';
+      const rawReplyContent = data.reply || "I'm listening...";
       const detectedMode = data.detectedMode || activeMode;
       const detectedMood = data.mood || selectedMood;
 
@@ -735,7 +749,6 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
             ...targetSession,
             messages: finalMessages,
             updatedAt: Date.now(),
-            // Title updates dynamically if it was the default title
             title: targetSession.title.startsWith('Conversation') 
               ? (text.length > 25 ? text.substring(0, 25) + '...' : text)
               : targetSession.title
@@ -780,7 +793,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       };
       requestAnimationFrame(animateOrb);
     } catch (err: any) {
-      console.error(err);
+      console.error('Chat send error:', err);
       const errString = err.message || JSON.stringify(err);
       const isQuotaError = errString.includes('Quota exceeded') || errString.includes('429') || errString.includes('RESOURCE_EXHAUSTED');
       const isUnavailable = errString.includes('503') || errString.includes('UNAVAILABLE') || errString.includes('high demand');
@@ -796,8 +809,16 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         mode: activeMode,
         timestamp: Date.now()
       };
-      const errorMessages = [...newMessages, errorMsg];
-      setMessages(errorMessages);
+      setMessages(prev => {
+        const updated = [...prev, errorMsg];
+        if (currentSessionId) {
+          const targetSession = sessions.find(s => s.id === currentSessionId);
+          if (targetSession) {
+            saveSession({ ...targetSession, messages: updated, updatedAt: Date.now() });
+          }
+        }
+        return updated;
+      });
       setOrbState('idle');
       
       triggerAudioAlert({

@@ -355,18 +355,43 @@ export const MOOD_CATEGORIES = [
   'Custom',
 ] as const;
 
+const MOOD_ALIASES: Record<string, string> = {
+  whisper: 'conspiratorial',
+  excited: 'ecstatic',
+  natural: 'serene',
+  dramatic: 'storyteller',
+  noir: 'sinister',
+  warm: 'affectionate',
+  curious: 'hesitant',
+  inquisitive: 'hesitant',
+  melancholic: 'melancholy',
+  calm: 'serene',
+  angry: 'furious',
+  sad: 'melancholy',
+};
+
 export function getSavedMoods(): MoodOption[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return EXHAUSTIVE_MOODS;
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed) || parsed.length < EXHAUSTIVE_MOODS.length) {
-      const customOnes = Array.isArray(parsed)
-        ? parsed.filter((p: MoodOption) => !EXHAUSTIVE_MOODS.some(m => m.id === p.id))
-        : [];
-      return [...EXHAUSTIVE_MOODS, ...customOnes];
+    const customList = Array.isArray(parsed) ? parsed : [];
+    const seen = new Set<string>();
+    const unique: MoodOption[] = [];
+    
+    for (const m of EXHAUSTIVE_MOODS) {
+      if (!seen.has(m.id)) {
+        seen.add(m.id);
+        unique.push(m);
+      }
     }
-    return parsed;
+    for (const p of customList) {
+      if (p && p.id && !seen.has(p.id)) {
+        seen.add(p.id);
+        unique.push(p);
+      }
+    }
+    return unique;
   } catch {
     return EXHAUSTIVE_MOODS;
   }
@@ -385,21 +410,31 @@ export function deleteMood(id: string): void {
 }
 
 export function getSavedMoodId(): string {
-  return localStorage.getItem(SELECTED_MOOD_KEY) || 'joyful';
+  if (typeof localStorage === 'undefined') return 'joyful';
+  try {
+    return localStorage.getItem(SELECTED_MOOD_KEY) || 'joyful';
+  } catch {
+    return 'joyful';
+  }
 }
 
 export function saveMoodId(id: string): void {
-  localStorage.setItem(SELECTED_MOOD_KEY, id);
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(SELECTED_MOOD_KEY, id);
+  } catch {}
 }
 
 export function getMoodById(id: string): MoodOption {
+  const clean = (id || '').toLowerCase().trim();
+  const target = MOOD_ALIASES[clean] || clean;
   const moods = getSavedMoods();
-  return moods.find(m => m.id === id) || EXHAUSTIVE_MOODS.find(m => m.id === id) || EXHAUSTIVE_MOODS[0];
+  return moods.find(m => m.id === target) || EXHAUSTIVE_MOODS.find(m => m.id === target) || EXHAUSTIVE_MOODS[0];
 }
 
 export function findMoodByTag(tagOrText: string): MoodOption | undefined {
   const clean = tagOrText.replace(/[\[\]]/g, '').trim().toLowerCase();
-  const target = clean === 'whisper' ? 'conspiratorial' : clean;
+  const target = MOOD_ALIASES[clean] || clean;
   return EXHAUSTIVE_MOODS.find(m => m.id === target || m.tag.replace(/[\[\]]/g, '').toLowerCase() === target);
 }
 
@@ -422,9 +457,17 @@ export function extractContextualProsody(text: string): { cleanText: string; moo
 }
 
 export function isContextualProsodyEnabled(): boolean {
-  return localStorage.getItem(DYNAMIC_PROSODY_KEY) !== 'false';
+  if (typeof localStorage === 'undefined') return true;
+  try {
+    return localStorage.getItem(DYNAMIC_PROSODY_KEY) !== 'false';
+  } catch {
+    return true;
+  }
 }
 
 export function setContextualProsodyEnabled(enabled: boolean): void {
-  localStorage.setItem(DYNAMIC_PROSODY_KEY, enabled ? 'true' : 'false');
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(DYNAMIC_PROSODY_KEY, enabled ? 'true' : 'false');
+  } catch {}
 }

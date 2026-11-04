@@ -423,13 +423,13 @@ export const MoodManager: React.FC = () => {
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredMoods.map(mood => {
+          {filteredMoods.map((mood, idx) => {
             const isPlaying = playingMoodId === mood.id;
             const isBuiltIn = EXHAUSTIVE_MOODS.some(b => b.id === mood.id);
 
             return (
               <div 
-                key={mood.id} 
+                key={`mood-card-${mood.id}-${idx}`} 
                 className="group relative p-5 rounded-2xl bg-slate-900/70 border border-slate-800/80 hover:border-violet-500/50 hover:bg-slate-900 transition-all flex flex-col justify-between shadow-sm hover:shadow-lg hover:shadow-violet-950/20"
               >
                 <div className="space-y-2.5">
