@@ -661,7 +661,7 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
         } catch (_) {}
       }
 
-      const loreSnippets = searchLore(cleanInputText || text, 3);
+      const loreSnippets = await searchLore(cleanInputText || text, 3);
       const activeInterruption = interruptionMemoryStore.getLastInterruption();
 
       const res = await fetch('/api/chat', {

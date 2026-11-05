@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
+import { db } from './src/db/libsql-server';
 import { EXHAUSTIVE_MOODS, findMoodByTag, extractContextualProsody, MoodOption, compilePaceForGemini } from './src/services/moodStore';
 import { parseVoxLine } from './src/services/voxLineParser';
 import { injectMicroSilences } from './src/services/audioProcessor';
@@ -155,6 +156,32 @@ function resolveAutomaticContextualMood(message: string, history: any[] = [], ex
     momentum: result.state.momentum 
   };
 }
+
+app.post('/api/lore-search', async (req, res) => {
+  try {
+    const { query, maxResults } = req.body;
+    // Assuming a simple schema: lore (id, title, content, tags)
+    // Perform a basic search - Turso/libSQL handles SQL parameterization
+    const result = await db.execute({
+      sql: `SELECT id, title, content, tags FROM lore WHERE title LIKE ? OR content LIKE ? LIMIT ?`,
+      args: [`%${query}%`, `%${query}%`, maxResults || 3]
+    });
+    
+    // Map Turso Row objects to LoreDocument interface
+    const docs = result.rows.map(row => ({
+      id: row.id as string,
+      title: row.title as string,
+      content: row.content as string,
+      tags: typeof row.tags === 'string' ? JSON.parse(row.tags as string) : (row.tags || []),
+      createdAt: Date.now() // Turso might need a created_at column if persisted
+    }));
+    
+    res.json(docs);
+  } catch (error) {
+    console.error('Lore search error:', error);
+    res.status(500).json({ error: 'Failed to search lore' });
+  }
+});
 
 app.post('/api/chat', async (req, res) => {
   try {

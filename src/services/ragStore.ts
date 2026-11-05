@@ -91,23 +91,27 @@ export function deleteLoreDocument(id: string) {
   localStorage.setItem('maya_lore_store', JSON.stringify(updated));
 }
 
-export function searchLore(query: string, maxResults = 3): LoreDocument[] {
-  const docs = getStoredLore();
-  if (!query.trim()) return docs.slice(0, maxResults);
+export async function searchLore(query: string, maxResults = 3): Promise<LoreDocument[]> {
+  // Always attempt to search Turso first, falling back to local search automatically
+  return await searchTursoLore(query, maxResults);
+}
 
-  const queryTerms = query.toLowerCase().split(/\s+/);
-  
-  const scored = docs.map(doc => {
-    const text = (doc.title + ' ' + doc.content + ' ' + doc.tags.join(' ')).toLowerCase();
-    let score = 0;
-    for (const term of queryTerms) {
-      if (text.includes(term)) score += 1;
-    }
-    return { doc, score };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored.filter(s => s.score > 0).slice(0, maxResults).map(s => s.doc);
+export async function searchTursoLore(query: string, maxResults = 3): Promise<LoreDocument[]> {
+  try {
+    const response = await fetch('/api/lore-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, maxResults }),
+    });
+    
+    if (!response.ok) throw new Error('Failed to fetch lore from Turso');
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching lore from Turso:', error);
+    // Fallback to local storage search if Turso fails
+    return searchLore(query, maxResults);
+  }
 }
 
 function getDefaultLore(): LoreDocument[] {

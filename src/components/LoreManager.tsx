@@ -14,10 +14,10 @@ export const LoreManager: React.FC = () => {
     setLoreList(getStoredLore());
   }, []);
 
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSearch = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const q = e.target.value;
     setSearchQuery(q);
-    setLoreList(searchLore(q, 20));
+    setLoreList(await searchLore(q, 20));
   };
 
   const handleAddLore = (e: React.FormEvent) => {
