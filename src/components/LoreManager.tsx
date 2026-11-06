@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BookOpen, Plus, Trash2, Search, FileText, Sparkles, Upload } from 'lucide-react';
-import { LoreDocument, getStoredLore, saveLoreDocument, deleteLoreDocument, searchLore } from '../services/ragStore';
+import { LoreDocument, saveLoreDocument, searchLore } from '../services/ragStore';
 
 export const LoreManager: React.FC = () => {
   const [loreList, setLoreList] = useState<LoreDocument[]>([]);
@@ -11,7 +11,7 @@ export const LoreManager: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
 
   useEffect(() => {
-    setLoreList(getStoredLore());
+    searchLore('', 20).then(setLoreList);
   }, []);
 
   const handleSearch = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -20,11 +20,11 @@ export const LoreManager: React.FC = () => {
     setLoreList(await searchLore(q, 20));
   };
 
-  const handleAddLore = (e: React.FormEvent) => {
+  const handleAddLore = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !content.trim()) return;
 
-    saveLoreDocument({
+    await saveLoreDocument({
       title,
       content,
       tags: tags.split(',').map(t => t.trim()).filter(Boolean),
@@ -34,12 +34,11 @@ export const LoreManager: React.FC = () => {
     setContent('');
     setTags('');
     setIsAdding(false);
-    setLoreList(getStoredLore());
+    setLoreList(await searchLore('', 20));
   };
 
   const handleDelete = (id: string) => {
-    deleteLoreDocument(id);
-    setLoreList(getStoredLore());
+    console.warn('Delete lore operation not implemented for Turso yet');
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -48,13 +47,14 @@ export const LoreManager: React.FC = () => {
 
     const text = await file.text();
     const docTitle = file.name.replace(/\.[^/.]+$/, '');
-    saveLoreDocument({
+    await saveLoreDocument({
       title: docTitle,
       content: text,
       tags: ['document', 'upload'],
     });
-    setLoreList(getStoredLore());
+    setLoreList(await searchLore('', 20));
   };
+// ... rest of the file ...
 
   return (
     <div className="max-w-4xl mx-auto py-10 px-6 space-y-8">

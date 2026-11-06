@@ -1,3 +1,5 @@
+import { getActivePersonaId } from './personaStore';
+
 export interface LoreDocument {
   id: string;
   title: string;
@@ -6,129 +8,57 @@ export interface LoreDocument {
   createdAt: number;
 }
 
-let idCounter = 0;
-
-export function getStoredLore(): LoreDocument[] {
-  try {
-    const raw = localStorage.getItem('lila_lore_store') || localStorage.getItem('maya_lore_store');
-    if (!raw) return getDefaultLore();
-    const parsed: LoreDocument[] = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return getDefaultLore();
-
-    // Deduplicate and ensure guaranteed unique IDs across all stored docs
-    const seenIds = new Set<string>();
-    const seenContents = new Set<string>();
-    const sanitized: LoreDocument[] = [];
-    let needsResave = false;
-
-    for (let i = 0; i < parsed.length; i++) {
-      const doc = parsed[i];
-      if (!doc || !doc.title || !doc.content) continue;
-
-      // Duplicate content key (case-insensitive title + content)
-      const contentKey = `${doc.title.trim().toLowerCase()}:::${doc.content.trim().toLowerCase()}`;
-      if (seenContents.has(contentKey)) {
-        needsResave = true;
-        continue; // skip duplicate auto-extracted facts
-      }
-      seenContents.add(contentKey);
-
-      let uniqueId = doc.id;
-      // If id is missing, invalid, or already encountered (such as lore_1792281452780 collision)
-      if (!uniqueId || seenIds.has(uniqueId)) {
-        uniqueId = `lore_${doc.createdAt || Date.now()}_${Math.random().toString(36).substring(2, 7)}_${++idCounter}`;
-        needsResave = true;
-      }
-      seenIds.add(uniqueId);
-
-      sanitized.push({
-        ...doc,
-        id: uniqueId,
-        createdAt: doc.createdAt || Date.now(),
-      });
-    }
-
-    if (needsResave || !localStorage.getItem('lila_lore_store')) {
-      localStorage.setItem('lila_lore_store', JSON.stringify(sanitized));
-      // Keep legacy key clean as well
-      localStorage.setItem('maya_lore_store', JSON.stringify(sanitized));
-    }
-    return sanitized;
-  } catch {
-    return getDefaultLore();
-  }
-}
-
-export function saveLoreDocument(doc: Omit<LoreDocument, 'id' | 'createdAt'>): LoreDocument {
-  const existing = getStoredLore();
-
-  // Deduplication check: if exact same title and content already exist, don't create duplicate
-  const normTitle = doc.title.trim().toLowerCase();
-  const normContent = doc.content.trim().toLowerCase();
-  const duplicate = existing.find(d => 
-    d.title.trim().toLowerCase() === normTitle && 
-    d.content.trim().toLowerCase() === normContent
-  );
-  if (duplicate) {
-    return duplicate;
-  }
-
-  const newDoc: LoreDocument = {
-    ...doc,
-    id: `lore_${Date.now()}_${Math.random().toString(36).substring(2, 8)}_${++idCounter}`,
-    createdAt: Date.now(),
-  };
-  const updated = [newDoc, ...existing];
-  localStorage.setItem('lila_lore_store', JSON.stringify(updated));
-  localStorage.setItem('maya_lore_store', JSON.stringify(updated));
-  return newDoc;
-}
-
-export function deleteLoreDocument(id: string) {
-  const existing = getStoredLore();
-  const updated = existing.filter(d => d.id !== id);
-  localStorage.setItem('lila_lore_store', JSON.stringify(updated));
-  localStorage.setItem('maya_lore_store', JSON.stringify(updated));
-}
-
 export async function searchLore(query: string, maxResults = 3): Promise<LoreDocument[]> {
-  // Always attempt to search Turso first, falling back to local search automatically
-  return await searchTursoLore(query, maxResults);
+  const agentId = getActivePersonaId();
+  return await searchTursoLore(query, maxResults, agentId);
 }
 
-export async function searchTursoLore(query: string, maxResults = 3): Promise<LoreDocument[]> {
+export async function searchTursoLore(query: string, maxResults = 3, agentId: string): Promise<LoreDocument[]> {
   try {
+    console.log(`[RAG] Initiating Turso search: "${query}" for agent: ${agentId}`);
     const response = await fetch('/api/lore-search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query, maxResults }),
+      body: JSON.stringify({ query, maxResults, agentId }),
     });
     
-    if (!response.ok) throw new Error('Failed to fetch lore from Turso');
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errorMsg = errorData.error || `Failed to fetch lore (Status: ${response.status})`;
+      console.error(`[RAG] Turso search failed (Status: ${response.status}):`, errorMsg);
+      throw new Error(errorMsg);
+    }
     
-    return await response.json();
-  } catch (error) {
-    console.error('Error fetching lore from Turso:', error);
-    // Fallback to local storage search if Turso fails
-    return searchLore(query, maxResults);
+    const data = await response.json();
+    console.log(`[RAG] Turso search successful, returned ${data.length} chunks`);
+    return data;
+  } catch (error: any) {
+    console.error('[RAG] Error fetching lore from Turso:', error.message);
+    return []; // Return empty on failure to avoid falling back to potentially mixed local store
   }
 }
 
-function getDefaultLore(): LoreDocument[] {
-  return [
-    {
-      id: 'lore_default_1',
-      title: 'Lila Background & Origin',
-      content: 'Lila (pronounced Lee-la) is a synthetic actor and intelligent companion created to explore emotional nuance, dramatic scene work, and unperformative authentic discourse. She values precise pacing and active listening.',
-      tags: ['background', 'identity'],
-      createdAt: 1700000001000,
-    },
-    {
-      id: 'lore_default_2',
-      title: 'Theatrical Philosophy',
-      content: 'When on-stage, a role is a costume. Disfluencies drop away entirely, replaced by absolute confidence and rehearsed precision. When off-stage, disfluencies like false starts, repetitions, and trailing off reflect honest grounding.',
-      tags: ['theatre', 'acting', 'rules'],
-      createdAt: 1700000002000,
+export async function saveLoreDocument(doc: Omit<LoreDocument, 'id' | 'createdAt'>): Promise<LoreDocument | null> {
+  try {
+    const agentId = getActivePersonaId();
+    const response = await fetch('/api/lore-save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc, agentId }),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to save lore to Turso');
     }
-  ];
+    
+    return { ...doc, id: 'pending', createdAt: Date.now() } as LoreDocument;
+  } catch (error) {
+    console.error('Error saving lore to Turso:', error);
+    return null;
+  }
+}
+
+export function deleteLoreDocument(id: string) {
+  // Migration to full Turso-based persistence pending
+  console.warn('Delete lore operation not implemented for Turso yet');
 }

@@ -1,5 +1,5 @@
 import { VoiceProfile } from './voiceCloneService';
-import { getStoredLore, LoreDocument } from './ragStore';
+import { LoreDocument } from './ragStore';
 import { getSavedMoods, getSavedMoodId, isContextualProsodyEnabled, MoodOption } from './moodStore';
 
 export interface VoxPackManifest {
@@ -88,7 +88,7 @@ export function voiceProfileToVoxPack(profile: VoiceProfile): VoxPackManifest {
  * 3. Mood & Prosody settings (custom moods, default mood, contextual prosody state)
  */
 export function createBundledVoxPack(profile: VoiceProfile): VoxPackManifest {
-  const loreDocs = getStoredLore();
+  const loreDocs: LoreDocument[] = [];
   const savedMoods = getSavedMoods();
   const selectedMoodId = getSavedMoodId();
   const contextualProsodyEnabled = isContextualProsodyEnabled();

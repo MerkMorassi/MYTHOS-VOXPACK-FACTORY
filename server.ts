@@ -157,14 +157,44 @@ function resolveAutomaticContextualMood(message: string, history: any[] = [], ex
   };
 }
 
+app.post('/api/db-setup', async (req, res) => {
+  try {
+    if (!db) {
+        return res.status(500).json({ error: 'Database client not initialized' });
+    }
+    await db.execute(`DROP TABLE IF EXISTS lore`);
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS lore (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        tags TEXT,
+        created_at INTEGER NOT NULL
+      )
+    `);
+    res.json({ message: 'Database initialized successfully with agent_id' });
+  } catch (error: any) {
+    console.error('Database setup error:', error);
+    res.status(500).json({ error: error.message || 'Failed to setup database' });
+  }
+});
+
 app.post('/api/lore-search', async (req, res) => {
   try {
-    const { query, maxResults } = req.body;
-    // Assuming a simple schema: lore (id, title, content, tags)
-    // Perform a basic search - Turso/libSQL handles SQL parameterization
+    if (!db) {
+        console.error('Lore search error: Database client not initialized');
+        return res.status(500).json({ error: 'Database client not initialized' });
+    }
+    const { query, maxResults, agentId } = req.body;
+    if (!agentId) {
+        return res.status(400).json({ error: 'agentId is required for lore search' });
+    }
+    
+    // Perform search scoped to agent_id
     const result = await db.execute({
-      sql: `SELECT id, title, content, tags FROM lore WHERE title LIKE ? OR content LIKE ? LIMIT ?`,
-      args: [`%${query}%`, `%${query}%`, maxResults || 3]
+      sql: `SELECT id, title, content, tags FROM lore WHERE agent_id = ? AND (title LIKE ? OR content LIKE ?) LIMIT ?`,
+      args: [agentId, `%${query}%`, `%${query}%`, maxResults || 3]
     });
     
     // Map Turso Row objects to LoreDocument interface
@@ -177,9 +207,39 @@ app.post('/api/lore-search', async (req, res) => {
     }));
     
     res.json(docs);
-  } catch (error) {
+  } catch (error: any) {
     console.error('Lore search error:', error);
-    res.status(500).json({ error: 'Failed to search lore' });
+    res.status(500).json({ error: error.message || 'Failed to search lore' });
+  }
+});
+
+app.post('/api/lore-save', async (req, res) => {
+  try {
+    if (!db) {
+        return res.status(500).json({ error: 'Database client not initialized' });
+    }
+    const { doc, agentId } = req.body;
+    if (!agentId || !doc || !doc.title || !doc.content) {
+        return res.status(400).json({ error: 'agentId, title, and content are required' });
+    }
+
+    // Insert lore document
+    await db.execute({
+      sql: `INSERT INTO lore (id, agent_id, title, content, tags, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [
+        doc.id || `lore_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+        agentId,
+        doc.title,
+        doc.content,
+        JSON.stringify(doc.tags || []),
+        doc.createdAt || Date.now()
+      ]
+    });
+    
+    res.json({ message: 'Lore saved successfully' });
+  } catch (error: any) {
+    console.error('Lore save error:', error);
+    res.status(500).json({ error: error.message || 'Failed to save lore' });
   }
 });
 

@@ -1,3 +1,4 @@
+import { openDB } from 'idb';
 import { Message } from '../components/ChatView';
 
 export interface ChatSession {
@@ -5,59 +6,62 @@ export interface ChatSession {
   title: string;
   createdAt: number;
   updatedAt: number;
-  personaId?: string;
+  personaId?: string; // mapped from AgentID 001-018
   messages: Message[];
 }
 
-const STORAGE_KEY = 'lila_chat_sessions';
+const DB_NAME = 'chat-db';
+const STORE_NAME = 'sessions';
 const ACTIVE_SESSION_ID_KEY = 'lila_active_session_id';
 
-export function getSavedSessions(): ChatSession[] {
+const dbPromise = openDB(DB_NAME, 1, {
+  upgrade(db) {
+    db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+  },
+});
+
+export async function getSavedSessions(): Promise<ChatSession[]> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
+    const db = await dbPromise;
+    const sessions = await db.getAll(STORE_NAME);
+    // Sort by updatedAt descending
+    return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
   } catch (err) {
     console.error('Failed to load chat sessions:', err);
     return [];
   }
 }
 
-export function saveSession(session: ChatSession): void {
+export async function saveSession(session: ChatSession): Promise<void> {
   try {
-    const sessions = getSavedSessions();
-    const existingIndex = sessions.findIndex(s => s.id === session.id);
-    if (existingIndex >= 0) {
-      sessions[existingIndex] = { ...session, updatedAt: Date.now() };
-    } else {
-      sessions.unshift({ ...session, updatedAt: Date.now() });
-    }
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    const db = await dbPromise;
+    const sessionToSave = { ...session, updatedAt: Date.now() };
+    await db.put(STORE_NAME, sessionToSave);
   } catch (err) {
     console.error('Failed to save session:', err);
   }
 }
 
-export function deleteSession(id: string): ChatSession[] {
+export async function deleteSession(id: string): Promise<ChatSession[]> {
   try {
-    const sessions = getSavedSessions().filter(s => s.id !== id);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
-    return sessions;
+    const db = await dbPromise;
+    await db.delete(STORE_NAME, id);
+    return await getSavedSessions();
   } catch (err) {
     console.error('Failed to delete session:', err);
     return [];
   }
 }
 
-export function getActiveSessionId(): string | null {
+export async function getActiveSessionId(): Promise<string | null> {
   return localStorage.getItem(ACTIVE_SESSION_ID_KEY);
 }
 
-export function setActiveSessionId(id: string): void {
+export async function setActiveSessionId(id: string): Promise<void> {
   localStorage.setItem(ACTIVE_SESSION_ID_KEY, id);
 }
 
-export function createNewSession(personaName = 'Lila', personaId?: string): ChatSession {
+export async function createNewSession(personaName = 'Lila', personaId?: string): Promise<ChatSession> {
   const initialMessage: Message = {
     id: 'msg_' + Date.now(),
     role: 'assistant',
@@ -75,7 +79,7 @@ export function createNewSession(personaName = 'Lila', personaId?: string): Chat
     messages: [initialMessage],
   };
 
-  saveSession(newSession);
-  setActiveSessionId(newSession.id);
+  await saveSession(newSession);
+  await setActiveSessionId(newSession.id);
   return newSession;
 }
