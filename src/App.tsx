@@ -31,6 +31,8 @@ import { audioLibrary } from './services/audioLibrary';
 import { interruptionMemoryStore } from './services/interruptionMemoryStore';
 import { audioCacheStore } from './services/audioCacheStore';
 import { getSharedAudioContext } from './services/audioContextManager';
+import { MythosBrowserFoleyTransformer } from './foley/transformer';
+import { BrowserFoleySampler } from './foley/sampler';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'companion' | 'personas' | 'studio' | 'lore' | 'moods'>('companion');
@@ -115,23 +117,41 @@ If the user asks why your voice sounds different or mentions that you are runnin
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const animFrameRef = useRef<number | null>(null);
+  const foleyTransformerRef = useRef<MythosBrowserFoleyTransformer | null>(null);
+  const foleySamplerRef = useRef<BrowserFoleySampler | null>(null);
+
+  // Initialize Foley engine
+  useEffect(() => {
+    const audioCtx = getSharedAudioContext();
+    const sampler = new BrowserFoleySampler(audioCtx);
+    foleySamplerRef.current = sampler;
+
+    foleyTransformerRef.current = new MythosBrowserFoleyTransformer((payload) => {
+      sampler.schedulePlay(payload.tag, payload.timeOffsetSeconds);
+    });
+  }, []);
 
   // Initialize or restore sessions on mount
   useEffect(() => {
-    let saved = getSavedSessions();
-    if (saved.length === 0) {
-      const initial = createNewSession(activePersona.name, activePersona.id);
-      saved = [initial];
-    }
-    setSessions(saved);
+    async function initSessions() {
+      let saved = await getSavedSessions();
+      if (saved.length === 0) {
+        const initial = await createNewSession(activePersona.name, activePersona.id);
+        saved = [initial];
+      }
+      setSessions(saved);
 
-    const activeId = getActiveSessionId();
-    const active = saved.find(s => s.id === activeId) || saved[0];
-    if (active) {
-      setCurrentSessionId(active.id);
-      setMessages(active.messages);
-      setActiveSessionId(active.id);
+      const activeId = await getActiveSessionId();
+      const active = saved.find(s => s.id === activeId) || saved[0];
+      if (active) {
+        setCurrentSessionId(active.id);
+        setMessages(active.messages);
+        if (activeId !== active.id) {
+          await setActiveSessionId(active.id);
+        }
+      }
     }
+    initSessions();
 
     // Initialize ECHOS audio library
     audioLibrary.initializeEngine().catch(err => console.warn('ECHOS Library init failed:', err));
@@ -702,6 +722,12 @@ Output only words meant to be spoken aloud. Spell out all abbreviations. No emoj
       const { injectedText: replyContent } = injectSemanticProsodyTags(rawReplyContent, { 
         moodTag: detectedMood?.tag || selectedMood?.tag 
       });
+
+      let contentToSpeak = replyContent;
+      if (foleyTransformerRef.current) {
+        foleyTransformerRef.current.resetTimeline();
+        contentToSpeak = foleyTransformerRef.current.process(replyContent);
+      }
 
       if (detectedMode !== activeMode) {
         setActiveMode(detectedMode);

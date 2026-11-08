@@ -162,7 +162,15 @@ app.post('/api/db-setup', async (req, res) => {
     if (!db) {
         return res.status(500).json({ error: 'Database client not initialized' });
     }
-    await db.execute(`DROP TABLE IF EXISTS lore`);
+    
+    // Check if table exists and has agent_id
+    const loreInfo = await db.execute(`PRAGMA table_info(lore)`);
+    const hasAgentId = loreInfo.rows.some(r => r.name === 'agent_id');
+    
+    if (!hasAgentId) {
+        await db.execute(`DROP TABLE IF EXISTS lore`);
+    }
+
     await db.execute(`
       CREATE TABLE IF NOT EXISTS lore (
         id TEXT PRIMARY KEY,
@@ -173,7 +181,24 @@ app.post('/api/db-setup', async (req, res) => {
         created_at INTEGER NOT NULL
       )
     `);
-    res.json({ message: 'Database initialized successfully with agent_id' });
+
+    const sessionsInfo = await db.execute(`PRAGMA table_info(chat_sessions)`);
+    const hasSessionAgentId = sessionsInfo.rows.some(r => r.name === 'agent_id');
+
+    if (!hasSessionAgentId) {
+        await db.execute(`DROP TABLE IF EXISTS chat_sessions`);
+    }
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        data TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    `);
+    res.json({ message: 'Database schema verified/updated successfully' });
   } catch (error: any) {
     console.error('Database setup error:', error);
     res.status(500).json({ error: error.message || 'Failed to setup database' });
@@ -240,6 +265,37 @@ app.post('/api/lore-save', async (req, res) => {
   } catch (error: any) {
     console.error('Lore save error:', error);
     res.status(500).json({ error: error.message || 'Failed to save lore' });
+  }
+});
+
+app.post('/api/session-save', async (req, res) => {
+  try {
+    if (!db) {
+        return res.status(500).json({ error: 'Database client not initialized' });
+    }
+    const { session, agentId } = req.body;
+    if (!agentId || !session || !session.id) {
+        return res.status(400).json({ error: 'agentId and session are required' });
+    }
+
+    // Upsert session
+    await db.execute({
+      sql: `INSERT INTO chat_sessions (id, agent_id, title, data, updated_at) 
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET title=excluded.title, data=excluded.data, updated_at=excluded.updated_at`,
+      args: [
+        session.id,
+        agentId,
+        session.title,
+        JSON.stringify(session.messages),
+        session.updatedAt
+      ]
+    });
+    
+    res.json({ message: 'Session saved successfully' });
+  } catch (error: any) {
+    console.error('Session save error:', error);
+    res.status(500).json({ error: error.message || 'Failed to save session' });
   }
 });
 

@@ -62,3 +62,38 @@ export function deleteLoreDocument(id: string) {
   // Migration to full Turso-based persistence pending
   console.warn('Delete lore operation not implemented for Turso yet');
 }
+
+export async function syncChatLogs(): Promise<{ uploaded: number, errors: number }> {
+  try {
+    const { getSavedSessions } = await import('./sessionStore');
+    const { getActivePersonaId } = await import('./personaStore');
+    
+    const sessions = await getSavedSessions();
+    const agentId = getActivePersonaId();
+    let uploaded = 0;
+    let errors = 0;
+
+    for (const session of sessions) {
+      try {
+        const response = await fetch('/api/session-save', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session, agentId }),
+        });
+        
+        if (response.ok) {
+          uploaded++;
+        } else {
+          errors++;
+        }
+      } catch (err) {
+        errors++;
+        console.error('Failed to sync session:', session.id, err);
+      }
+    }
+    return { uploaded, errors };
+  } catch (err) {
+    console.error('Sync failed:', err);
+    return { uploaded: 0, errors: 1 };
+  }
+}
